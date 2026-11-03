@@ -1,0 +1,1118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PayGo - Next-Gen Fintech & UPI Ecosystem Demo Walkthrough</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --navy: #0A1F44;
+      --navy-light: #162a52;
+      --ocean: #0077B6;
+      --cyan: #48CAE4;
+      --accent-gold: #FFB800;
+      --success: #00C853;
+      --card-bg: #111E38;
+      --card-border: #1E355B;
+      --text-main: #FFFFFF;
+      --text-muted: #8E9AAF;
+      --bg: #060D1A;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      user-select: none;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text-main);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px 16px;
+      overflow-x: hidden;
+      background-image: 
+        radial-gradient(circle at 15% 20%, rgba(0, 119, 182, 0.15) 0%, transparent 40%),
+        radial-gradient(circle at 85% 80%, rgba(72, 202, 228, 0.12) 0%, transparent 40%);
+    }
+
+    /* Outer Container */
+    .showcase-wrapper {
+      width: 100%;
+      max-width: 1100px;
+      background: #0B1528;
+      border: 1px solid var(--card-border);
+      border-radius: 24px;
+      box-shadow: 0 25px 70px rgba(0, 0, 0, 0.6), 0 0 40px rgba(0, 119, 182, 0.2);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Top Video Bar / Header */
+    .video-header {
+      padding: 16px 24px;
+      background: rgba(10, 31, 68, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--card-border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .brand-tag {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .brand-logo {
+      width: 38px;
+      height: 38px;
+      background: linear-gradient(135deg, #0077B6, #48CAE4);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 18px;
+      color: #fff;
+      box-shadow: 0 4px 12px rgba(0, 119, 182, 0.4);
+    }
+
+    .brand-title h1 {
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .badge-live {
+      background: rgba(255, 23, 68, 0.2);
+      border: 1px solid #FF1744;
+      color: #FF5252;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      animation: pulse 2s infinite;
+    }
+
+    .brand-title p {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .badge-resolution {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--cyan);
+    }
+
+    /* Main Stage */
+    .video-stage {
+      position: relative;
+      height: 580px;
+      background: #070D1B;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    /* Canvas Grid Lines */
+    .grid-overlay {
+      position: absolute;
+      inset: 0;
+      background-size: 40px 40px;
+      background-image: 
+        linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+      pointer-events: none;
+    }
+
+    /* Phone Mockup Frame */
+    .device-mockup {
+      width: 320px;
+      height: 520px;
+      background: #0A1324;
+      border: 4px solid #283E66;
+      border-radius: 36px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.8), 0 0 35px rgba(0, 119, 182, 0.3);
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      z-index: 2;
+      transition: all 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    /* Notch */
+    .device-notch {
+      width: 110px;
+      height: 18px;
+      background: #000;
+      border-bottom-left-radius: 12px;
+      border-bottom-right-radius: 12px;
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      z-index: 10;
+    }
+
+    .notch-camera {
+      width: 6px;
+      height: 6px;
+      background: #142850;
+      border-radius: 50%;
+    }
+
+    .notch-speaker {
+      width: 35px;
+      height: 3px;
+      background: #222;
+      border-radius: 2px;
+    }
+
+    /* Screen Viewport */
+    .screen-content {
+      flex: 1;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      overflow-y: auto;
+    }
+
+    /* Scene Container (Fades in/out) */
+    .scene-view {
+      display: none;
+      opacity: 0;
+      transform: translateY(10px);
+      transition: opacity 0.4s ease, transform 0.4s ease;
+      height: 100%;
+      flex-direction: column;
+    }
+
+    .scene-view.active {
+      display: flex;
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    /* Scene 1: Home Dashboard */
+    .home-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+
+    .user-pill {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255, 255, 255, 0.08);
+      padding: 4px 10px 4px 5px;
+      border-radius: 20px;
+    }
+
+    .avatar-sm {
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      background: #FFB800;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+      color: #000;
+    }
+
+    .wallet-card {
+      background: linear-gradient(135deg, #0077B6, #0A2E68);
+      padding: 16px;
+      border-radius: 18px;
+      box-shadow: 0 10px 20px rgba(0, 119, 182, 0.3);
+      margin-bottom: 14px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .wallet-card::after {
+      content: '';
+      position: absolute;
+      top: -30px;
+      right: -30px;
+      width: 100px;
+      height: 100px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 50%;
+    }
+
+    .wallet-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #90E0EF;
+    }
+
+    .wallet-balance {
+      font-size: 24px;
+      font-weight: 800;
+      margin: 4px 0 10px;
+      letter-spacing: -0.5px;
+    }
+
+    .wallet-actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .mini-btn {
+      background: rgba(255, 255, 255, 0.2);
+      border: none;
+      color: #fff;
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-size: 11px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    /* Grid Shortcuts */
+    .services-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .service-item {
+      background: #111E38;
+      border: 1px solid #1E355B;
+      padding: 10px 4px;
+      border-radius: 14px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .service-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 10px;
+      background: rgba(0, 119, 182, 0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+    }
+
+    .service-name {
+      font-size: 9.5px;
+      color: #B2BEC3;
+      font-weight: 500;
+    }
+
+    .recent-txns-mini {
+      background: #111E38;
+      border-radius: 14px;
+      padding: 12px;
+      flex: 1;
+    }
+
+    .section-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--cyan);
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .txn-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      font-size: 11px;
+    }
+
+    /* Scene 2: Event Collect */
+    .event-banner {
+      background: linear-gradient(135deg, #1E3A8A, #3B82F6);
+      padding: 14px;
+      border-radius: 16px;
+      margin-bottom: 12px;
+      position: relative;
+    }
+
+    .alias-badge {
+      display: inline-block;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px dashed #60A5FA;
+      padding: 3px 8px;
+      border-radius: 6px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10.5px;
+      color: #93C5FD;
+      margin-top: 4px;
+    }
+
+    .progress-bar-wrap {
+      margin-top: 10px;
+      background: rgba(0, 0, 0, 0.3);
+      height: 6px;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: #10B981;
+      width: 78%;
+      border-radius: 3px;
+    }
+
+    .qr-mock-container {
+      background: #fff;
+      padding: 12px;
+      border-radius: 14px;
+      align-self: center;
+      margin: 10px 0;
+      box-shadow: 0 6px 16px rgba(0,0,0,0.4);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .qr-pattern {
+      width: 110px;
+      height: 110px;
+      background: 
+        repeating-linear-gradient(0deg, #000 0px, #000 7px, #fff 7px, #fff 14px),
+        repeating-linear-gradient(90deg, #000 0px, #000 7px, #fff 7px, #fff 14px);
+      background-blend-mode: difference;
+      border: 6px solid #000;
+      position: relative;
+    }
+
+    .crypt-hash {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 8.5px;
+      background: #091222;
+      border: 1px solid #1D3459;
+      color: #10B981;
+      padding: 6px;
+      border-radius: 6px;
+      word-break: break-all;
+      margin-top: 4px;
+    }
+
+    /* Scene 3: Account Aggregator */
+    .aa-node-flow {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      flex: 1;
+    }
+
+    .bank-card {
+      background: #111E38;
+      border: 1px solid #1E355B;
+      padding: 12px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .consent-modal {
+      background: #0E1A33;
+      border: 1px solid #2E5C9A;
+      padding: 12px;
+      border-radius: 14px;
+      margin-top: auto;
+    }
+
+    /* Scene 4: AI Assistant */
+    .ai-bubble-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      flex: 1;
+    }
+
+    .ai-msg {
+      max-width: 85%;
+      padding: 10px 12px;
+      border-radius: 14px;
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
+    .ai-msg.user {
+      align-self: flex-end;
+      background: #0077B6;
+      color: #fff;
+      border-bottom-right-radius: 3px;
+    }
+
+    .ai-msg.bot {
+      align-self: flex-start;
+      background: #152238;
+      border: 1px solid #25395A;
+      color: #E2E8F0;
+      border-bottom-left-radius: 3px;
+    }
+
+    .guardrail-card {
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid #EF4444;
+      border-radius: 10px;
+      padding: 8px 10px;
+      margin-top: 6px;
+      font-size: 10px;
+      color: #FCA5A5;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* Scene Side Narration Panel */
+    .stage-side-info {
+      position: absolute;
+      right: 40px;
+      width: 440px;
+      background: rgba(14, 25, 48, 0.88);
+      border: 1px solid var(--card-border);
+      backdrop-filter: blur(16px);
+      border-radius: 20px;
+      padding: 24px;
+      box-shadow: 0 15px 35px rgba(0, 0, 0, 0.4);
+      z-index: 5;
+    }
+
+    .narration-badge {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--cyan);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .narration-title {
+      font-size: 22px;
+      font-weight: 800;
+      margin-bottom: 12px;
+      color: #fff;
+      line-height: 1.25;
+    }
+
+    .narration-desc {
+      font-size: 13.5px;
+      color: var(--text-muted);
+      line-height: 1.6;
+      margin-bottom: 18px;
+    }
+
+    .feature-bullets {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .feature-bullets li {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      font-size: 12.5px;
+      color: #CFD8DC;
+    }
+
+    .feature-bullets li .dot {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: rgba(0, 119, 182, 0.3);
+      color: var(--cyan);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      margin-top: 1px;
+      flex-shrink: 0;
+    }
+
+    /* Video Player Controls (At Bottom) */
+    .video-controls {
+      padding: 16px 24px 20px;
+      background: #091325;
+      border-top: 1px solid var(--card-border);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    /* Progress Scrubber */
+    .scrubber-bar {
+      width: 100%;
+      height: 6px;
+      background: #1B2B48;
+      border-radius: 3px;
+      position: relative;
+      cursor: pointer;
+    }
+
+    .scrubber-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #0077B6, #48CAE4);
+      width: 0%;
+      border-radius: 3px;
+      transition: width 0.1s linear;
+      position: relative;
+    }
+
+    .scrubber-handle {
+      position: absolute;
+      right: -6px;
+      top: -4px;
+      width: 14px;
+      height: 14px;
+      background: #fff;
+      border-radius: 50%;
+      box-shadow: 0 0 10px rgba(0, 119, 182, 0.8);
+    }
+
+    /* Bottom Buttons Row */
+    .controls-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .playback-group {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .ctrl-btn {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      color: #fff;
+      width: 38px;
+      height: 38px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 15px;
+      transition: all 0.2s;
+    }
+
+    .ctrl-btn:hover {
+      background: rgba(0, 119, 182, 0.3);
+      border-color: var(--cyan);
+    }
+
+    .ctrl-btn.play-master {
+      width: 44px;
+      height: 44px;
+      background: var(--ocean);
+      border-color: var(--cyan);
+      border-radius: 50%;
+      font-size: 18px;
+      box-shadow: 0 4px 15px rgba(0, 119, 182, 0.5);
+    }
+
+    .time-readout {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: #A0AEC0;
+    }
+
+    /* Scene Chapter Navigation Pills */
+    .chapter-pills {
+      display: flex;
+      gap: 8px;
+    }
+
+    .chapter-pill {
+      background: #111E38;
+      border: 1px solid #1E355B;
+      color: #8E9AAF;
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 11.5px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.25s;
+    }
+
+    .chapter-pill.active {
+      background: rgba(0, 119, 182, 0.25);
+      border-color: var(--cyan);
+      color: #fff;
+    }
+
+    @keyframes pulse {
+      0% { opacity: 0.6; }
+      50% { opacity: 1; }
+      100% { opacity: 0.6; }
+    }
+
+    @media (max-width: 950px) {
+      .video-stage {
+        flex-direction: column;
+        height: auto;
+        padding: 30px 10px;
+        gap: 20px;
+      }
+      .stage-side-info {
+        position: static;
+        width: 100%;
+        max-width: 480px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="showcase-wrapper">
+    <!-- Header -->
+    <div class="video-header">
+      <div class="brand-tag">
+        <div class="brand-logo">P</div>
+        <div class="brand-title">
+          <h1>PayGo Interactive Showcase <span class="badge-live">HQ Interactive</span></h1>
+          <p>Full-Stack Fintech & UPI Ecosystem with Autonomous Financial AI</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <span class="badge-resolution">1080p 60FPS</span>
+        <button class="ctrl-btn" onclick="toggleFullScreen()" title="Full Screen">⛶</button>
+      </div>
+    </div>
+
+    <!-- Video Stage -->
+    <div class="video-stage">
+      <div class="grid-overlay"></div>
+
+      <!-- Smartphone Mockup -->
+      <div class="device-mockup">
+        <div class="device-notch">
+          <div class="notch-camera"></div>
+          <div class="notch-speaker"></div>
+        </div>
+
+        <div class="screen-content">
+          <!-- SCENE 1: Home Dashboard -->
+          <div class="scene-view active" id="scene-1">
+            <div class="home-header">
+              <div class="user-pill">
+                <div class="avatar-sm">AP</div>
+                <span style="font-size: 11px; font-weight: 600;">Aditya P.</span>
+              </div>
+              <div style="font-size: 14px;">🔔</div>
+            </div>
+
+            <div class="wallet-card">
+              <div class="wallet-label">Primary Account Balance</div>
+              <div class="wallet-balance">₹ 1,42,850.00</div>
+              <div class="wallet-actions">
+                <button class="mini-btn">Scan QR</button>
+                <button class="mini-btn">Send Money</button>
+              </div>
+            </div>
+
+            <div class="services-grid">
+              <div class="service-item">
+                <div class="service-icon">⚡</div>
+                <div class="service-name">Electricity</div>
+              </div>
+              <div class="service-item">
+                <div class="service-icon">📱</div>
+                <div class="service-name">Recharge</div>
+              </div>
+              <div class="service-item">
+                <div class="service-icon">💳</div>
+                <div class="service-name">Credit Card</div>
+              </div>
+              <div class="service-item">
+                <div class="service-icon">🎉</div>
+                <div class="service-name">Collect</div>
+              </div>
+            </div>
+
+            <div class="recent-txns-mini">
+              <div class="section-title">
+                <span>Recent Activity</span>
+                <span style="font-size: 9.5px; color: #8E9AAF;">View All</span>
+              </div>
+              <div class="txn-row">
+                <span>Swiggy Delivery</span>
+                <span style="color: #FF5252; font-weight:600;">-₹450</span>
+              </div>
+              <div class="txn-row">
+                <span>Salary Credited</span>
+                <span style="color: #00E676; font-weight:600;">+₹85,000</span>
+              </div>
+              <div class="txn-row">
+                <span>Netflix AutoPay</span>
+                <span style="color: #FF5252; font-weight:600;">-₹649</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- SCENE 2: Event Collect & Settlement Proof -->
+          <div class="scene-view" id="scene-2">
+            <div class="event-banner">
+              <div style="font-size: 10px; color: #BFDBFE;">EVENT COLLECTION</div>
+              <h3 style="font-size: 15px; font-weight: 700; margin: 2px 0;">Goa Reunion 2026</h3>
+              <div class="alias-badge">goa2026@paygo</div>
+              <div class="progress-bar-wrap">
+                <div class="progress-fill"></div>
+              </div>
+              <div style="display:flex; justify-content:space-between; font-size:10px; margin-top:4px;">
+                <span>Collected: ₹39,000</span>
+                <span>Goal: ₹50,000</span>
+              </div>
+            </div>
+
+            <div class="qr-mock-container">
+              <div class="qr-pattern"></div>
+              <span style="font-size: 10px; font-weight: 700; color: #0A1F44;">Dynamic UPI QR</span>
+            </div>
+
+            <div style="font-size: 10px; color: #94A3B8; margin-top: 4px;">ECDSA Cryptographic Proof:</div>
+            <div class="crypt-hash">
+              SHA256: 7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069<br>
+              SIG: 3045022100e4c5b1698a...VERIFIED
+            </div>
+          </div>
+
+          <!-- SCENE 3: RBI Account Aggregator -->
+          <div class="scene-view" id="scene-3">
+            <div style="margin-bottom: 10px;">
+              <span style="font-size: 10px; color: var(--cyan); font-weight: 700;">ACCOUNT AGGREGATOR</span>
+              <h3 style="font-size: 15px; font-weight: 700;">Consolidated Portfolio</h3>
+            </div>
+
+            <div class="aa-node-flow">
+              <div class="bank-card">
+                <div>
+                  <div style="font-size: 12px; font-weight:700;">HDFC Bank •• 4912</div>
+                  <div style="font-size: 10px; color: #8E9AAF;">Savings Account</div>
+                </div>
+                <div style="font-size: 12px; font-weight:700; color:#00E676;">₹94,520</div>
+              </div>
+
+              <div class="bank-card">
+                <div>
+                  <div style="font-size: 12px; font-weight:700;">ICICI Bank •• 7731</div>
+                  <div style="font-size: 10px; color: #8E9AAF;">Salary Account</div>
+                </div>
+                <div style="font-size: 12px; font-weight:700; color:#00E676;">₹48,330</div>
+              </div>
+
+              <div class="consent-modal">
+                <div style="font-size: 10px; color: #60A5FA; font-weight: 600;">ACTIVE CONSENT #AA-9982</div>
+                <div style="font-size: 11px; margin: 4px 0;">Revocable Real-time Data Sync</div>
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <span style="font-size: 9px; color:#94A3B8;">Expires: Oct 2027</span>
+                  <span style="background:rgba(16,185,129,0.2); color:#10B981; font-size:9px; padding:2px 6px; border-radius:4px;">SYNCED</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- SCENE 4: Autonomous Financial AI Assistant -->
+          <div class="scene-view" id="scene-4">
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px; border-bottom:1px solid #1E355B; padding-bottom:8px;">
+              <span style="font-size:16px;">🤖</span>
+              <div>
+                <div style="font-size: 12px; font-weight:700;">PayGo AI Advisor</div>
+                <div style="font-size: 9.5px; color:#10B981;">Online • Llama-3 70B & Guardrails</div>
+              </div>
+            </div>
+
+            <div class="ai-bubble-list">
+              <div class="ai-msg user">
+                Can I pay ₹55,000 for luxury tickets right now?
+              </div>
+              <div class="ai-msg bot">
+                Checking your cashflow, upcoming recurring bills (₹14,200), and min balance rule...
+                <div class="guardrail-card">
+                  <span>⚠️</span>
+                  <span><strong>BLOCKED:</strong> Exceeds ₹40k safety threshold. Min balance would breach ₹5,000.</span>
+                </div>
+              </div>
+              <div class="ai-msg user">
+                Show my top spending categories this month
+              </div>
+              <div class="ai-msg bot">
+                📊 Food & Dining: 34% (₹12,400)<br>
+                🚗 Transit: 22% (₹8,100)<br>
+                💡 Utilities: 18% (₹6,500)
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Side Narration Info -->
+      <div class="stage-side-info">
+        <div class="narration-badge" id="side-chapter">CHAPTER 01 / 04</div>
+        <h2 class="narration-title" id="side-title">Unified Paytm & UPI 2.0 Experience</h2>
+        <p class="narration-desc" id="side-desc">
+          PayGo combines deep mobile-first ergonomics with instantaneous UPI payments, bill fetches, and real-time ledger accounting.
+        </p>
+
+        <ul class="feature-bullets" id="side-bullets">
+          <li>
+            <div class="dot">✓</div>
+            <div>Seamless UPI transfers, contact lookups, and dynamic QR scanner</div>
+          </li>
+          <li>
+            <div class="dot">✓</div>
+            <div>Utility bill recharges with automated bill-fetch engine</div>
+          </li>
+          <li>
+            <div class="dot">✓</div>
+            <div>Secure 4-digit UPI PIN validation and session management</div>
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Controls & Timeline -->
+    <div class="video-controls">
+      <!-- Scrubber -->
+      <div class="scrubber-bar" onclick="seekVideo(event)" id="scrubber-container">
+        <div class="scrubber-fill" id="scrubber-progress">
+          <div class="scrubber-handle"></div>
+        </div>
+      </div>
+
+      <!-- Control Bar -->
+      <div class="controls-row">
+        <div class="playback-group">
+          <button class="ctrl-btn" onclick="prevChapter()" title="Previous Scene">⏮</button>
+          <button class="ctrl-btn play-master" onclick="togglePlay()" id="play-btn" title="Play / Pause">▶</button>
+          <button class="ctrl-btn" onclick="nextChapter()" title="Next Scene">⏭</button>
+          <div class="time-readout">
+            <span id="curr-time">00:00</span> / <span id="total-time">00:40</span>
+          </div>
+        </div>
+
+        <div class="chapter-pills">
+          <div class="chapter-pill active" onclick="jumpToChapter(0)">1. Paytm Core</div>
+          <div class="chapter-pill" onclick="jumpToChapter(1)">2. Event Collect</div>
+          <div class="chapter-pill" onclick="jumpToChapter(2)">3. Account Aggregator</div>
+          <div class="chapter-pill" onclick="jumpToChapter(3)">4. AI Guardrails</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const CHAPTERS = [
+      {
+        id: 1,
+        title: "Unified Paytm & UPI 2.0 Experience",
+        desc: "PayGo delivers an ultra-smooth, responsive mobile experience. Users can transfer money, pay utility bills, inspect live balances, and scan dynamic QR codes effortlessly.",
+        bullets: [
+          "Instantaneous peer-to-peer and merchant UPI transactions",
+          "Automated bill fetch for electricity, water, gas, and mobile recharge",
+          "Zero-friction onboarding with 6-digit OTP verification and 4-digit PIN setup"
+        ],
+        duration: 10
+      },
+      {
+        id: 2,
+        title: "Event Collect & Cryptographic Proof",
+        desc: "Organize group collections with dedicated UPI alias handles (e.g. event@paygo). Incoming settlements are auto-matched with zero custodial lock-in, ending with ECDSA-signed tamper-proof proofs.",
+        bullets: [
+          "Custom event handles routing directly to organizer's bank account",
+          "Real-time ledger matching with audit tags and reminder broadcasting",
+          "ECDSA SHA256 verifiable settlement certificate for 100% public transparency"
+        ],
+        duration: 10
+      },
+      {
+        id: 3,
+        title: "RBI Account Aggregator Financial Hub",
+        desc: "Connect multiple bank accounts securely using the RBI Account Aggregator framework. Consolidated net worth, categorized expense analytics, and recurring transaction intelligence.",
+        bullets: [
+          "Consent-driven read-only financial data aggregation",
+          "Automated transaction classification into 12+ lifestyle categories",
+          "One-tap consent revocation and bank approval simulation"
+        ],
+        duration: 10
+      },
+      {
+        id: 4,
+        title: "PayGo Autonomous Financial AI (Llama 70B)",
+        desc: "Integrated with Phinite financial agent logic. The AI evaluates real-time affordability, warns against budget-busting impulse purchases, and suggests verified investment avenues.",
+        bullets: [
+          "Deterministic guardrails: BLOCKED, WARNING, and SAFE state logic",
+          "Real-time expense charting and cashflow prediction",
+          "Personalized wealth guidance powered by high-speed Groq Llama-3 inference"
+        ],
+        duration: 10
+      }
+    ];
+
+    let currentChapter = 0;
+    let isPlaying = false;
+    let playbackSeconds = 0;
+    const totalDuration = 40; // 10s each
+    let playInterval = null;
+
+    function updateUI() {
+      // Update Scenes
+      for (let i = 1; i <= 4; i++) {
+        const sc = document.getElementById(`scene-${i}`);
+        if (i === currentChapter + 1) {
+          sc.classList.add('active');
+        } else {
+          sc.classList.remove('active');
+        }
+      }
+
+      // Update Side Info
+      const data = CHAPTERS[currentChapter];
+      document.getElementById('side-chapter').innerText = `CHAPTER 0${data.id} / 04`;
+      document.getElementById('side-title').innerText = data.title;
+      document.getElementById('side-desc').innerText = data.desc;
+
+      const bulletsEl = document.getElementById('side-bullets');
+      bulletsEl.innerHTML = data.bullets.map(b => `
+        <li>
+          <div class="dot">✓</div>
+          <div>${b}</div>
+        </li>
+      `).join('');
+
+      // Update Pills
+      const pills = document.querySelectorAll('.chapter-pill');
+      pills.forEach((p, idx) => {
+        if (idx === currentChapter) {
+          p.classList.add('active');
+        } else {
+          p.classList.remove('active');
+        }
+      });
+
+      // Update Scrubber
+      const pct = (playbackSeconds / totalDuration) * 100;
+      document.getElementById('scrubber-progress').style.width = `${pct}%`;
+
+      // Update Time
+      const m = Math.floor(playbackSeconds / 60);
+      const s = Math.floor(playbackSeconds % 60);
+      document.getElementById('curr-time').innerText = 
+        `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    }
+
+    function togglePlay() {
+      isPlaying = !isPlaying;
+      const btn = document.getElementById('play-btn');
+      if (isPlaying) {
+        btn.innerText = '⏸';
+        playInterval = setInterval(() => {
+          playbackSeconds += 0.25;
+          if (playbackSeconds >= totalDuration) {
+            playbackSeconds = 0; // loop
+          }
+          currentChapter = Math.min(3, Math.floor(playbackSeconds / 10));
+          updateUI();
+        }, 250);
+      } else {
+        btn.innerText = '▶';
+        clearInterval(playInterval);
+      }
+    }
+
+    function jumpToChapter(idx) {
+      currentChapter = idx;
+      playbackSeconds = idx * 10;
+      updateUI();
+    }
+
+    function nextChapter() {
+      currentChapter = (currentChapter + 1) % 4;
+      playbackSeconds = currentChapter * 10;
+      updateUI();
+    }
+
+    function prevChapter() {
+      currentChapter = (currentChapter - 1 + 4) % 4;
+      playbackSeconds = currentChapter * 10;
+      updateUI();
+    }
+
+    function seekVideo(e) {
+      const rect = document.getElementById('scrubber-container').getBoundingClientRect();
+      const pos = (e.clientX - rect.left) / rect.width;
+      playbackSeconds = Math.max(0, Math.min(totalDuration, pos * totalDuration));
+      currentChapter = Math.min(3, Math.floor(playbackSeconds / 10));
+      updateUI();
+    }
+
+    function toggleFullScreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      } else {
+        document.exitFullscreen().catch(() => {});
+      }
+    }
+
+    // Auto-start presentation
+    window.addEventListener('DOMContentLoaded', () => {
+      updateUI();
+      togglePlay();
+    });
+  </script>
+</body>
+</html>
