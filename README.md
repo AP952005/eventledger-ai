@@ -137,24 +137,31 @@ flowchart TD
 
 ---
 
-## 7. PayPal Integration
+## 7. PayPal Developer Platform Integration
 
-The PayPal Developer integration forms the core international settlement backbone of EventLedger AI:
+The PayPal Developer integration forms the core international settlement backbone of EventLedger AI. It is powered by our registered PayPal Developer Sandbox application:
 
-- **Sandbox REST Environment**: Configured with live Sandbox Business credentials targeting `https://api-m.sandbox.paypal.com`.
-- **OAuth 2.0 Token Generation**: Retrieves and caches Bearer tokens securely on the server side using the Client Credentials grant. Secrets are never exposed to Flutter.
+### Registered Sandbox Application Details
+- **Application Name**: `EventTreasury AI`
+- **Sandbox Environment Target**: `https://api-m.sandbox.paypal.com`
+- **Merchant Sandbox Business Account**: `sb-43y5x32338950@business.example.com`
+- **Client ID Prefix**: `BAAY6D6VlDpvlzHEd8zZU0bln9ZS65jNg4bqeZmTMow...` (full key managed in server-side `.env`)
+- **App Type & APIs**: REST Application with Invoicing API v2, Payments API, and Webhooks enabled.
+
+### Implementation Architecture & Endpoints
+- **OAuth 2.0 Token Generation (`POST /v1/oauth2/token`)**: Retrieves and caches Bearer tokens securely on the server side using the Client Credentials grant (`grant_type=client_credentials`). Client secret is never exposed to Flutter or client bundles.
 - **Invoicing API v2 Lifecycle**:
-  - `POST /v2/invoicing/invoices`: Creates itemized invoices linked directly to participant registration records with decimal-accurate amounts.
+  - `POST /v2/invoicing/invoices`: Creates itemized invoices linked directly to participant registration records with decimal-accurate amounts and international currency codes (`USD`, `EUR`, `GBP`).
   - `POST /v2/invoicing/invoices/{id}/send`: Sends the invoice with `send_to_recipient: false` to avoid spamming Sandbox email addresses while transitioning status to `SENT`.
   - `POST /v2/invoicing/invoices/{id}/generate-qr-code`: Retrieves the official PayPal-generated invoice QR code from PayPal's multipart/form-data response and extracts the raw Base64 image payload.
   - `GET /v2/invoicing/invoices/{id}`: Fetches real-time status and payment metadata directly from PayPal servers.
 - **Hosted Payment Checkout**: Displays the official hosted checkout URL (`https://www.sandbox.paypal.com/invoice/p/...`) allowing participants to pay with a PayPal personal buyer account.
 - **Verified Webhook Listener (`POST /api/webhooks/paypal`)**: Subscribes to invoice lifecycle events (`INVOICING.INVOICE.PAID`, `PAYMENT.SALE.COMPLETED`, `INVOICING.INVOICE.CANCELLED`), performs signature checks, and deduplicates event IDs to prevent double-crediting.
 
-> **Current Test Status (Sandbox)**: Live Sandbox invoice creation and QR retrieval verified on PayPal servers:
+> **Current Verified Test Status (Sandbox)**: Live Sandbox invoice creation and QR retrieval verified on PayPal servers:
 > - **Invoice ID**: `INV2-H74E-BVRL-78AN-CX8C`
 > - **Amount**: $50.00 USD
-> - **QR Base64 Length**: 700 bytes
+> - **QR Base64 Payload**: 700 bytes
 > - **Current Server Status**: `UNPAID` (Pending completion via personal sandbox buyer account).
 
 ---
@@ -202,15 +209,48 @@ The backend enforces strict geographic and currency eligibility rules via `POST 
 
 ---
 
-## 11. Financial Hub & Account Aggregation
+## 11. Financial Hub & Financial Analysis via Bank Connection (Account Aggregator)
 
-The **Financial Hub** (`/financial-hub`) provides consolidated net worth and cashflow tracking:
+### Why Event Apps Suffer from a "Data Blindspot"
+Traditional event ticketing platforms operate in complete financial isolation. They only record ticket registration revenue collected within their own database. In reality:
+- **Organizers have multi-bank expenses**: Venue deposits, caterers, audio/visual rentals, speaker travel reimbursements, and marketing campaigns are paid from corporate or personal bank accounts, not the ticketing app.
+- **Cashflow visibility is fractured**: An organizer might see $5,000 in gross ticket sales on their event dashboard, but remain unaware that vendor debit obligations totaling $4,200 cleared their bank account yesterday, leaving their operational runway dangerously tight.
+- **Disconnected accounts prevent real financial intelligence**: Without bank account linking, AI copilots can only answer narrow queries about ticket counts, rather than true financial questions like *"Can we afford the keynote speaker dinner given our current liquid bank balance?"*
 
-- **Simulated Account Aggregator (AA) Consent Flow**: Implements a compliant multi-step consent journey (purpose specification, date ranges, data types) simulating RBI-regulated Account Aggregators.
-- **Multi-Currency Ledger Segregation**: Calculates balances separately by currency (e.g., USD and INR totals are never conflated without explicit, timestamped exchange rates).
-- **Spending Analytics & Insights**: Category breakdowns across Food, Transport, Bills, and Event Operations.
+### The Solution: Consent-Driven Financial Analysis & Bank Linking
+EventLedger AI solves this with its **Financial Hub** (`/financial-hub`), uniting event ticketing revenue with external financial accounts through a consent-driven **Account Aggregator (AA)** architecture:
 
-*(Note: Live bank linking uses high-fidelity mock banking definitions to demonstrate the user experience without requiring production NBFC-AA licenses).*
+```mermaid
+flowchart LR
+    subgraph Banks["Connected Banking Institutions"]
+        B1["HDFC Bank Checking"]
+        B2["ICICI Bank Savings"]
+        B3["Axis Bank Operating"]
+    end
+
+    subgraph AA["Account Aggregator Network"]
+        Consent["FIP Consent Engine<br/>(Purpose, Period, Data Type)"]
+    end
+
+    subgraph EventLedger["EventLedger AI Platform"]
+        Hub["Financial Hub<br/>Aggregated Balances & Cashflow"]
+        PayPal["PayPal Event Revenue<br/>(Invoicing & Collections)"]
+        AI["Gemini Copilot<br/>Real-Time Financial Analysis"]
+    end
+
+    Banks -->|Encrypted Financial Data| Consent
+    Consent -->|Consent-Approved Feed| Hub
+    PayPal --> Hub
+    Hub --> AI
+```
+
+1. **Consent-Driven Bank Linking**: Implements a compliant multi-step consent flow modeled after RBI-regulated Account Aggregator (AA) specifications. Organizers select their financial institution, specify the consent validity window, grant explicit data access scopes, and link multiple checking, savings, and credit accounts.
+2. **Comprehensive Net Worth & Liquidity Overview**: Aggregates external bank balances with pending and collected PayPal event funds to display true operational net worth and liquid reserves in real time.
+3. **Categorized Expense & Cashflow Analysis**: Categorizes external debits across key event cost centers—Food & Beverage, Venue Logistics, Travel & Transport, Utilities & Subscriptions—contrasting actual bank debits against gross event ticket revenues.
+4. **Multi-Currency Ledger Segregation**: Keeps international funds (`USD`, `EUR`) and domestic funds (`INR`) strictly isolated in dedicated ledger views, preventing deceptive currency mixing while applying timestamped reference conversion for consolidated reporting.
+5. **AI-Powered Holistic Financial Advisory**: With external bank telemetry integrated into the secure backend financial summary (`GET /api/financial/summary`), the Google Gemini AI copilot can deliver holistic financial advice, runway forecasting, and cashflow risk detection.
+
+*(Note: Live bank linking uses high-fidelity mock banking definitions to simulate the Account Aggregator protocol safely without requiring production NBFC-AA licenses).*
 
 ---
 
