@@ -1,4 +1,5 @@
 {
+  "public": true,
   "rewrites": [
     {
       "source": "/api/:path*",
@@ -13,7 +14,7 @@
       "destination": "/api/index.py"
     },
     {
-      "source": "/(.*)",
+      "source": "/((?!assets/|canvaskit/|icons/|favicon.png|flutter.js|flutter_bootstrap.js|flutter_service_worker.js|main.dart.js|manifest.json|version.json).*)",
       "destination": "/index.html"
     }
   ]
