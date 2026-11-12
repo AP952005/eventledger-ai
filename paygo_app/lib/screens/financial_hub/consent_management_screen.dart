@@ -37,7 +37,16 @@ class _ConsentManagementScreenState extends State<ConsentManagementScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Consent Management'),
-        leading: IconButton(icon: const Icon(Icons.arrow_back_rounded), onPressed: () => context.pop()),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/home');
+            }
+          },
+        ),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())

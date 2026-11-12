@@ -61,7 +61,16 @@ class _TransactionListScreenState extends State<TransactionListScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Transactions'),
-        leading: IconButton(icon: const Icon(Icons.arrow_back_rounded), onPressed: () => context.pop()),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/home');
+            }
+          },
+        ),
       ),
       body: Column(
         children: [

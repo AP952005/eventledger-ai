@@ -50,7 +50,16 @@ class _FinancialHubScreenState extends State<FinancialHubScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Financial Hub'),
-        leading: IconButton(icon: const Icon(Icons.arrow_back_rounded), onPressed: () => context.pop()),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/home');
+            }
+          },
+        ),
         actions: [
           if (hasAccounts)
             IconButton(

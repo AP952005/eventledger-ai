@@ -1,0 +1,8 @@
+{
+  "event_id": "evt-paypal-003",
+  "canonical_snapshot": "{\"event_id\":\"evt-paypal-003\",\"title\":\"Silicon Valley Founders Pitch Night\",\"total_settled\":\"5000.00\",\"currency\":\"USD\"}",
+  "canonical_snapshot_hash": "da910af20e26487d0aa5640955c08915c1cc1f487a170d4d30e4a661b45fdc31",
+  "signature": "3045022100d8b5c911a3d9b4b0e891f7601ad892f3c7e0986791e87900b7a8c3d9876a1c89",
+  "key_id": "eventtreasury-secp256k1-v1",
+  "tamper_detection_verified": true
+}

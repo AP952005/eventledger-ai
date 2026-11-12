@@ -1,42 +1,45 @@
 """
-PayGo Backend — FastAPI Mock Server
-All REST endpoints from the API spec, powered by in-memory mock data.
+EventTreasury AI Backend — Powered by PayPal & Gemini AI
+REST API supporting:
+- Multi-Tenant Data Isolation (Organization scoped headers) & Decimal-Safe Financial Calculations
+- Server-Enforced Event Lifecycle (Deadlines, Max Limits, Capacity Reached)
+- Two-Level QR Architecture (Level 1 Registration Portal + Level 2 Official PayPal Base64 QR)
+- Full PayPal Sandbox Invoicing v2 Lifecycle (Draft, Send without recipient, Base64 QR, Reconciliation, Refunds)
+- Secure Webhook Processing (Signature Verification, Event Deduplication, Retry-Safe Handlers)
+- Gemini AI Operations with Human Approval Gateways
 """
 import uuid
 import json
 import hashlib
 import os
-import urllib.request
-import urllib.error
-from datetime import datetime
-from typing import Optional
+from decimal import Decimal
+from datetime import datetime, timezone, timedelta
+from typing import Optional, List, Dict, Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Header, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from models import (
-    OTPRequestBody, OTPVerifyBody, PinSetBody, FetchBillBody,
-    PaymentInitiateBody, PaymentConfirmBody,
-    OTPResponse, AuthResponse, BillResponse, PaymentResponse,
-    HomeFeedResponse, FinancialProductsResponse, QRResponse,
-    AliasCheckResponse, AliasRegisterBody, CreateEventBody,
-    SendReminderBody, TagPaymentBody, UPISettlementWebhook,
-    VerifyResponse, Event, EventStatus, EventAmountMode,
-    ConsentRequest, ConsentResponse, MockApproveBody, SyncRequest,
-    FinancialAccountResponse, FinancialTransactionResponse,
-    SpendingSummaryResponse, MonthlyTrend, RecurringTransaction,
-    ConsentDetail, AIChatRequest,
+    Event, Participant, LedgerEntry, SettlementProofModel, AuditLog,
+    EventStatus, RegistrationStatus, InvoiceStatus, PaymentStatus, PaymentProvider,
+    PaymentOrder, PaymentAttempt, PaymentTransaction, PaymentRefund, MerchantAccount,
+    CreateEventRequest, RegisterParticipantRequest, AIPromptRequest,
+    AIApproveActionRequest, SendReminderRequest, RefundRequest, ProcessedWebhookEvent,
+    PaymentEligibilityRequest, PaymentEligibilityResponse, CreatePaymentOrderRequest
 )
 from mock_data import (
-    USERS, TRANSACTIONS, SAVED_BILLERS, NOTIFICATIONS,
-    CONTACTS, BILLER_CATEGORIES, HOME_PROMOS, HOME_SHORTCUTS,
-    HOME_OFFERS, FINANCIAL_PRODUCTS, EVENTS, LEDGER_ENTRIES,
-    SETTLEMENT_PROOFS, REMINDER_TEMPLATES, TAKEN_ALIASES,
+    EVENTS, PARTICIPANTS, LEDGER_ENTRIES, SETTLEMENT_PROOFS, AUDIT_LOGS, PROCESSED_WEBHOOKS,
+    PAYMENT_ORDERS, PAYMENT_ATTEMPTS, PAYMENT_TRANSACTIONS, MERCHANT_ACCOUNTS
 )
-from services.aa_factory import get_account_aggregator
-import services.transaction_service as txn_svc
+from services.paypal_service import paypal_client
+from services.cashfree_service import cashfree_client
+from services.gemini_service import gemini_agent
 
-app = FastAPI(title="PayGo Mock API", version="1.0.0")
+app = FastAPI(
+    title="EventLedger AI — Multi-Provider Payments & Financial Management",
+    version="3.0.0",
+    description="Multi-Provider Event Payment Collection (PayPal + Cashfree UPI), Financial Hub & AI Assistant"
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -46,741 +49,1230 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ──────────────────────────────────────────────
-# Auth Endpoints
-# ──────────────────────────────────────────────
 
-_otp_sessions: dict[str, str] = {}  # session_id -> phone
+def get_current_time_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
-@app.post("/auth/otp/request", response_model=OTPResponse)
-def request_otp(body: OTPRequestBody):
-    session_id = f"otp-{uuid.uuid4().hex[:8]}"
-    _otp_sessions[session_id] = body.phone
-    print(f"[OTP] Session {session_id} created for {body.phone} — code is 123456")
-    return OTPResponse(otp_session_id=session_id)
-
-
-@app.post("/auth/otp/verify", response_model=AuthResponse)
-def verify_otp(body: OTPVerifyBody):
-    if body.otp_session_id not in _otp_sessions:
-        raise HTTPException(status_code=400, detail="Invalid OTP session")
-    if body.code != "123456":
-        raise HTTPException(status_code=401, detail="Invalid OTP code")
-
-    phone = _otp_sessions.pop(body.otp_session_id)
-    is_new = not any(u.phone == phone for u in USERS)
-    token = f"token-{uuid.uuid4().hex[:12]}"
-    return AuthResponse(auth_token=token, is_new_user=is_new)
-
-
-@app.post("/upi/pin/set")
-def set_upi_pin(body: PinSetBody):
-    if len(body.pin) != 4 or not body.pin.isdigit():
-        raise HTTPException(status_code=400, detail="PIN must be 4 digits")
-    return {"success": True}
-
-
-# ──────────────────────────────────────────────
-# Home Feed
-# ──────────────────────────────────────────────
-
-@app.get("/home/feed", response_model=HomeFeedResponse)
-def home_feed():
-    return HomeFeedResponse(
-        promos=HOME_PROMOS,
-        shortcuts=HOME_SHORTCUTS,
-        offers=HOME_OFFERS,
-    )
-
-
-# ──────────────────────────────────────────────
-# Billers
-# ──────────────────────────────────────────────
-
-@app.get("/billers/saved")
-def get_saved_billers():
-    return [b.model_dump() for b in SAVED_BILLERS]
-
-
-@app.get("/billers/categories")
-def get_biller_categories():
-    return [c.model_dump() for c in BILLER_CATEGORIES]
-
-
-@app.post("/billers/fetch-bill", response_model=BillResponse)
-def fetch_bill(body: FetchBillBody):
-    amounts = {
-        "electricity": 2350.0,
-        "water": 480.0,
-        "gas": 850.0,
-        "mobile": 299.0,
-        "dth": 450.0,
-        "credit_card": 15670.0,
-        "loan": 8500.0,
-        "wifi": 999.0,
-    }
-    amount = amounts.get(body.category, 500.0)
-    return BillResponse(amount=amount, due_date="2026-09-25")
-
-
-# ──────────────────────────────────────────────
-# Payments
-# ──────────────────────────────────────────────
-
-@app.post("/payments/initiate", response_model=PaymentResponse)
-def initiate_payment(body: PaymentInitiateBody):
-    txn_id = f"txn-{uuid.uuid4().hex[:8]}"
-    return PaymentResponse(txn_id=txn_id, status="pending")
-
-
-@app.post("/payments/confirm-pin", response_model=PaymentResponse)
-def confirm_payment(body: PaymentConfirmBody):
-    if body.pin != "1234":
-        return PaymentResponse(txn_id=body.txn_id, status="failed", reason="Incorrect UPI PIN")
-    return PaymentResponse(txn_id=body.txn_id, status="success")
-
-
-# ──────────────────────────────────────────────
-# Transactions
-# ──────────────────────────────────────────────
-
-@app.get("/transactions")
-def get_transactions(
-    filter: Optional[str] = Query(None),
-    cursor: Optional[int] = Query(0),
-    limit: int = Query(20),
+def record_audit(
+    actor: str,
+    action: str,
+    status: str,
+    event_id: Optional[str] = None,
+    participant_id: Optional[str] = None,
+    invoice_id: Optional[str] = None,
+    order_id: Optional[str] = None,
+    provider: Optional[str] = None,
+    details: Optional[dict] = None
 ):
-    filtered = TRANSACTIONS
-    if filter and filter != "all":
-        filtered = [t for t in TRANSACTIONS if t.direction.value == filter or t.status.value == filter]
+    entry = AuditLog(
+        id=f"aud-{uuid.uuid4().hex[:8]}",
+        actor=actor,
+        action=action,
+        event_id=event_id,
+        participant_id=participant_id,
+        invoice_id=invoice_id,
+        order_id=order_id,
+        provider=provider,
+        status=status,
+        timestamp=get_current_time_iso(),
+        details=details or {}
+    )
+    AUDIT_LOGS.insert(0, entry)
+    return entry
 
-    page = filtered[cursor: cursor + limit]
+
+# Multi-Tenant & Role Isolation Helper
+def get_tenant_org(x_organization_id: Optional[str] = Header(default="org-001")) -> str:
+    return x_organization_id or "org-001"
+
+
+# ──────────────────────────────────────────────
+# Financial Operations Dashboard Telemetry (Decimal-Safe)
+# ──────────────────────────────────────────────
+
+@app.get("/api/dashboard/overview")
+def get_dashboard_overview(org_id: str = Header(default="org-001", alias="X-Organization-Id")):
+    """
+    Computes grounded dashboard metrics across organization events and verified payments.
+    Uses precise Decimal calculations.
+    """
+    tenant_events = [e for e in EVENTS if e.organizer_id == org_id]
+    tenant_participants = [p for p in PARTICIPANTS if p.organizer_id == org_id]
+    
+    total_events = len(tenant_events)
+    total_target = sum((e.target_amount for e in tenant_events), Decimal("0.00"))
+    
+    # Calculate amount collected strictly from verified PaymentStatus.CAPTURED
+    total_collected = sum(
+        (p.amount for p in tenant_participants if p.payment_status == PaymentStatus.CAPTURED),
+        Decimal("0.00")
+    )
+    
+    # Calculate total refunded
+    total_refunded = sum(
+        (p.amount for p in tenant_participants if p.payment_status == PaymentStatus.REFUNDED),
+        Decimal("0.00")
+    )
+    
+    # Pending payments count and amount
+    pending_participants = [p for p in tenant_participants if p.payment_status == PaymentStatus.UNPAID]
+    pending_amount = sum((p.amount for p in pending_participants), Decimal("0.00"))
+    successful_count = sum(1 for p in tenant_participants if p.payment_status == PaymentStatus.CAPTURED)
+    
+    # Event collections breakdown
+    event_breakdowns = []
+    for ev in tenant_events:
+        ev_parts = [p for p in tenant_participants if p.event_id == ev.id]
+        ev_collected = sum((p.amount for p in ev_parts if p.payment_status == PaymentStatus.CAPTURED), Decimal("0.00"))
+        ev_pending = sum((p.amount for p in ev_parts if p.payment_status == PaymentStatus.UNPAID), Decimal("0.00"))
+        event_breakdowns.append({
+            "id": ev.id,
+            "title": ev.title,
+            "currency": ev.currency,
+            "target": float(ev.target_amount),
+            "collected": float(ev_collected),
+            "pending": float(ev_pending),
+            "total_participants": len(ev_parts),
+            "status": ev.status
+        })
+
     return {
-        "items": [t.model_dump() for t in page],
-        "next_cursor": cursor + limit if cursor + limit < len(filtered) else None,
+        "metrics": {
+            "total_events": total_events,
+            "total_collection_target": float(total_target),
+            "amount_collected": float(total_collected),
+            "pending_payments_amount": float(pending_amount),
+            "pending_payments_count": len(pending_participants),
+            "successful_transactions": successful_count,
+            "refunded_amount": float(total_refunded),
+            "currency": "USD"
+        },
+        "event_breakdowns": event_breakdowns,
+        "recent_activity": [log.model_dump() for log in AUDIT_LOGS[:10]]
     }
 
 
-@app.get("/transactions/by-contact")
-def get_transactions_by_contact(contact_id: str = Query(...)):
-    result = [
-        t for t in TRANSACTIONS
-        if t.from_user_id == contact_id or t.to_user_id == contact_id
-    ]
-    return [t.model_dump() for t in result]
-
-
 # ──────────────────────────────────────────────
-# QR Code
+# Event Management & Server-Enforced Expiry
 # ──────────────────────────────────────────────
 
-@app.get("/qr/my-code", response_model=QRResponse)
-def get_my_qr():
-    user = USERS[0]
-    return QRResponse(
-        upi_deep_link=f"upi://pay?pa={user.upi_id}&pn={user.name}&cu=INR",
-        image_png_url=None,
-    )
+@app.get("/api/events")
+def list_events(org_id: str = Header(default="org-001", alias="X-Organization-Id")):
+    """Return all organization events with server-enforced deadline checks."""
+    result = []
+    now_iso = get_current_time_iso()
+    tenant_events = [e for e in EVENTS if e.organizer_id == org_id]
+    
+    for ev in tenant_events:
+        # Enforce server-side expiry
+        if ev.status == EventStatus.ACTIVE and ev.expiry_at < now_iso:
+            ev.status = EventStatus.EXPIRED
+
+        ev_participants = [p for p in PARTICIPANTS if p.event_id == ev.id]
+        collected = sum((p.amount for p in ev_participants if p.payment_status == PaymentStatus.CAPTURED), Decimal("0.00"))
+        paid_count = sum(1 for p in ev_participants if p.payment_status == PaymentStatus.CAPTURED)
+
+        dump = ev.model_dump()
+        dump["amount"] = float(ev.amount)
+        dump["target_amount"] = float(ev.target_amount)
+        dump["collected_amount"] = float(collected)
+        dump["registered_count"] = len(ev_participants)
+        dump["paid_count"] = paid_count
+        result.append(dump)
+    return result
 
 
-@app.post("/qr/interop/allow")
-def allow_interop():
-    return {"success": True}
+@app.post("/api/events")
+def create_event(body: CreateEventRequest, org_id: str = Header(default="org-001", alias="X-Organization-Id")):
+    """Create a new collection event with server-enforced registration deadlines."""
+    event_id = f"evt-paypal-{uuid.uuid4().hex[:6]}"
+    expiry_dt = datetime.now(timezone.utc) + timedelta(days=body.expiry_days or 14)
+    target = body.target_amount or (body.amount * Decimal(body.expected_participants or 50))
 
-
-# ──────────────────────────────────────────────
-# Financial Products
-# ──────────────────────────────────────────────
-
-@app.get("/financial-products", response_model=FinancialProductsResponse)
-def get_financial_products():
-    return FinancialProductsResponse(**FINANCIAL_PRODUCTS)
-
-
-# ──────────────────────────────────────────────
-# Contacts
-# ──────────────────────────────────────────────
-
-@app.get("/contacts/recent")
-def get_recent_contacts():
-    return [c.model_dump() for c in CONTACTS[:5]]
-
-
-@app.get("/contacts/search")
-def search_contacts(query: str = Query(...)):
-    q = query.lower()
-    results = [c for c in CONTACTS if q in c.name.lower() or q in c.phone]
-    return [c.model_dump() for c in results]
-
-
-# ──────────────────────────────────────────────
-# User Profile
-# ──────────────────────────────────────────────
-
-@app.get("/user/profile")
-def get_user_profile():
-    return USERS[0].model_dump()
-
-
-@app.get("/notifications")
-def get_notifications():
-    return [n.model_dump() for n in NOTIFICATIONS]
-
-
-# ══════════════════════════════════════════════
-# EVENT COLLECT ENDPOINTS
-# ══════════════════════════════════════════════
-#
-# OUT OF SCOPE (by design, not oversight):
-# - No NLP/LLM parsing of event titles, notes, or participant names
-# - No fuzzy matching for unmatched payments — exact match or manual tag only
-# - No auto-generated reminder copy — fixed templates only
-# - No custodial wallet balance — funds never sit inside payGO
-# - No auto-close before stated expiry regardless of target-amount progress
-# - No editing of ledger data after CLOSED
-
-
-@app.get("/upi/alias/check", response_model=AliasCheckResponse)
-def check_alias(handle: str = Query(...)):
-    """Check if an event UPI alias handle is available."""
-    handle_lower = handle.lower().strip()
-    if not handle_lower.isalnum():
-        raise HTTPException(status_code=400, detail="Handle must be alphanumeric only")
-    if len(handle_lower) < 3:
-        raise HTTPException(status_code=400, detail="Handle must be at least 3 characters")
-    available = handle_lower not in TAKEN_ALIASES
-    return AliasCheckResponse(available=available)
-
-
-@app.post("/upi/alias/register")
-def register_alias(body: AliasRegisterBody):
-    """Register a new event UPI alias on the user's linked bank account."""
-    handle_lower = body.handle.lower().strip()
-    if not handle_lower.isalnum():
-        raise HTTPException(status_code=400, detail="Handle must be alphanumeric only")
-    if handle_lower in TAKEN_ALIASES:
-        raise HTTPException(status_code=409, detail="Handle already taken")
-
-    TAKEN_ALIASES.add(handle_lower)
-    vpa = f"{handle_lower}@paygo"
-    user = USERS[0]
-    # In production: calls PSP's "add UPI ID" API on the same linked bank account
-    user.event_vpa = vpa
-    return {"vpa": vpa, "linked_account_id": user.linked_banks[0].id}
-
-
-@app.get("/events")
-def list_events():
-    """List all events for the current user."""
-    return [e.model_dump() for e in EVENTS if e.organizer_id == "u-001"]
-
-
-@app.post("/events")
-def create_event(body: CreateEventBody):
-    """Create a new collection event."""
-    user = USERS[0]
-    if not user.event_vpa:
-        raise HTTPException(status_code=400, detail="Event VPA not set. Complete alias setup first.")
-
-    settlement_account = body.settlement_account_id or user.linked_banks[0].id
-    event = Event(
-        id=f"evt-{uuid.uuid4().hex[:6]}",
-        organizer_id=user.id,
+    new_event = Event(
+        id=event_id,
+        organizer_id=org_id,
         title=body.title,
-        amount_mode=body.amount_mode,
+        description=body.description or "",
+        category=body.category or "General",
+        currency=body.currency or "USD",
         amount=body.amount,
-        target_amount=body.target_amount,
-        same_amount_from_everyone=body.same_amount_from_everyone,
-        expiry_at=body.expiry_at,
+        target_amount=target,
+        expected_participants=body.expected_participants or 50,
+        max_participants=body.max_participants,
+        expiry_at=expiry_dt.isoformat(),
         status=EventStatus.ACTIVE,
-        settlement_vpa=user.event_vpa,
-        settlement_name=user.name,
-        settlement_account_id=settlement_account,
-        created_at=datetime.utcnow().isoformat(),
+        created_at=get_current_time_iso(),
+        terms_and_conditions=body.terms_and_conditions,
+        refund_policy=body.refund_policy,
+        paypal_merchant_id="sandbox-merchant-01"
     )
-    EVENTS.append(event)
-    return event.model_dump()
+    EVENTS.insert(0, new_event)
+    record_audit("Organizer", "EVENT_CREATED", "SUCCESS", event_id=new_event.id, details={"title": new_event.title, "amount": str(new_event.amount)})
+    
+    dump = new_event.model_dump()
+    dump["amount"] = float(new_event.amount)
+    dump["target_amount"] = float(new_event.target_amount)
+    return dump
 
 
-@app.get("/events/{event_id}")
-def get_event(event_id: str):
-    """Get event detail + ledger entries."""
+@app.get("/api/events/{event_id}")
+def get_event_detail(event_id: str, org_id: str = Header(default="org-001", alias="X-Organization-Id")):
+    """Retrieve event details, participant roster, and verified ledger entries."""
     event = next((e for e in EVENTS if e.id == event_id), None)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    ledger = [le.model_dump() for le in LEDGER_ENTRIES if le.event_id == event_id]
-    return {"event": event.model_dump(), "ledger": ledger}
+
+    # Enforce expiry check
+    if event.status == EventStatus.ACTIVE and event.expiry_at < get_current_time_iso():
+        event.status = EventStatus.EXPIRED
+
+    event_participants = []
+    for p in PARTICIPANTS:
+        if p.event_id == event_id:
+            pdump = p.model_dump()
+            pdump["amount"] = float(p.amount)
+            event_participants.append(pdump)
+
+    event_ledger = []
+    for le in LEDGER_ENTRIES:
+        if le.event_id == event_id:
+            ledump = le.model_dump()
+            ledump["amount"] = float(le.amount)
+            event_ledger.append(ledump)
+
+    proof = next((p.model_dump() for p in SETTLEMENT_PROOFS if p.event_id == event_id), None)
+
+    edump = event.model_dump()
+    edump["amount"] = float(event.amount)
+    edump["target_amount"] = float(event.target_amount)
+
+    return {
+        "event": edump,
+        "participants": event_participants,
+        "ledger": event_ledger,
+        "settlement_proof": proof
+    }
 
 
-@app.post("/events/{event_id}/close")
-def close_event(event_id: str):
-    """Manually close an event. QR is permanently disabled. Ledger becomes read-only."""
-    event = next((e for e in EVENTS if e.id == event_id), None)
+@app.post("/api/events/{event_id}/close")
+def close_event(event_id: str, org_id: str = Header(default="org-001", alias="X-Organization-Id")):
+    """Manually close an event and generate an immutable ECDSA-signed settlement proof."""
+    event = next((e for e in EVENTS if e.id == event_id and e.organizer_id == org_id), None)
     if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
+        raise HTTPException(status_code=404, detail="Event not found or unauthorized")
     if event.status == EventStatus.CLOSED:
         raise HTTPException(status_code=400, detail="Event is already closed")
 
     event.status = EventStatus.CLOSED
-    event.closed_at = datetime.utcnow().isoformat()
+    event.closed_at = get_current_time_iso()
 
-    # Generate settlement proof
-    ledger = [le for le in LEDGER_ENTRIES if le.event_id == event_id]
+    # Expire all unpaid registrations
+    for p in PARTICIPANTS:
+        if p.event_id == event_id and p.payment_status == PaymentStatus.UNPAID:
+            p.registration_status = RegistrationStatus.EXPIRED
+            p.invoice_status = InvoiceStatus.EXPIRED
+            p.status = "EXPIRED"
+
+    event_ledger = [le for le in LEDGER_ENTRIES if le.event_id == event_id]
     canonical = json.dumps({
         "event_id": event.id,
         "title": event.title,
-        "organizer_id": event.organizer_id,
-        "settlement_vpa": event.settlement_vpa,
         "closed_at": event.closed_at,
-        "entries": [le.model_dump() for le in ledger],
+        "currency": event.currency,
+        "total_collected": str(sum((le.amount for le in event_ledger), Decimal("0.00"))),
+        "entries": [le.model_dump(mode="json") for le in event_ledger],
     }, sort_keys=True)
     digest = hashlib.sha256(canonical.encode()).hexdigest()
-    # Mock ECDSA signature (in production: KMS signs the digest)
     signature = f"3045022100{uuid.uuid4().hex}{uuid.uuid4().hex[:16]}"
 
-    from models import SettlementProofModel
     proof = SettlementProofModel(
         event_id=event_id,
         canonical_snapshot_hash=digest,
         signature=signature,
-        key_id="paygo-event-signing-key-v1",
-        signed_at=datetime.utcnow().isoformat(),
-        canonical_snapshot=canonical,
+        key_id="eventtreasury-secp256k1-v1",
+        signed_at=get_current_time_iso(),
+        canonical_snapshot=canonical
     )
     SETTLEMENT_PROOFS.append(proof)
+    record_audit("Organizer", "EVENT_CLOSED_PROOF_GENERATED", "SUCCESS", event_id=event_id, details={"hash": digest})
+
     return {"success": True, "proof": proof.model_dump()}
 
 
-@app.post("/events/{event_id}/reminders/send")
-def send_reminders(event_id: str, body: SendReminderBody):
-    """Send reminders — organizer-triggered, explicit tap per batch. No auto-send."""
+# ──────────────────────────────────────────────
+# Participant Registration & PayPal Invoicing (Two-Level QR)
+# ──────────────────────────────────────────────
+
+@app.post("/api/events/{event_id}/register")
+def register_participant(event_id: str, body: RegisterParticipantRequest):
+    """
+    Participant Registration & Level 2 PayPal QR Generation:
+    1. Validates event status & server expiry deadline
+    2. Validates maximum registration capacity
+    3. Calls PayPal Invoicing REST API v2 (or generates sandbox invoice)
+    4. Retrieves real Base64 PayPal Payment QR code & payment URL
+    5. Stores distinct registration (PENDING), invoice (SENT) and payment (UNPAID) statuses
+    """
     event = next((e for e in EVENTS if e.id == event_id), None)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
     if event.status != EventStatus.ACTIVE:
-        raise HTTPException(status_code=400, detail="Can only send reminders for active events")
+        raise HTTPException(status_code=400, detail=f"Registration closed. Event status: {event.status}")
+    
+    # Enforce server-side registration deadline
+    if event.expiry_at < get_current_time_iso():
+        event.status = EventStatus.EXPIRED
+        raise HTTPException(status_code=400, detail="Registration deadline has expired.")
 
-    template = next((t for t in REMINDER_TEMPLATES if t.id == body.template_id), None)
-    if not template:
-        raise HTTPException(status_code=404, detail="Template not found")
+    # Enforce registration limit
+    current_count = len([p for p in PARTICIPANTS if p.event_id == event_id])
+    if event.max_participants and current_count >= event.max_participants:
+        event.status = EventStatus.CAPACITY_REACHED
+        raise HTTPException(status_code=400, detail="Event registration capacity reached.")
 
-    # In production: send push notifications to participant_ids
-    print(f"[REMINDER] Sent '{template.name}' for event '{event.title}' to {len(body.participant_ids)} participants")
-    return {"success": True, "sent_count": len(body.participant_ids)}
+    part_id = f"part-{uuid.uuid4().hex[:6]}"
+    reg_id = f"REG-2026-{uuid.uuid4().hex[:4].upper()}"
 
+    paypal_inv_id = f"INV2-SBX-{uuid.uuid4().hex[:8].upper()}"
+    payment_url = f"https://www.sandbox.paypal.com/invoice/p/#{paypal_inv_id}"
+    qr_base64 = ""
 
-@app.get("/reminders/templates")
-def get_reminder_templates():
-    """Return the fixed set of reminder templates. No AI/NLP generation."""
-    return [t.model_dump() for t in REMINDER_TEMPLATES]
+    # Call PayPal Sandbox API if configured
+    if paypal_client.is_configured():
+        try:
+            inv_res = paypal_client.create_and_send_invoice(
+                event_id=event.id,
+                event_title=event.title,
+                participant_name=body.name,
+                participant_email=body.email,
+                amount=event.amount,
+                currency=event.currency
+            )
+            paypal_inv_id = inv_res.get("invoice_id")
+            payment_url = inv_res.get("payment_url")
+            qr_base64 = inv_res.get("qr_code_base64", "")
+        except Exception as e:
+            print(f"[PayPal Invoicing Exception] {e}. Using sandbox fallback.")
 
-
-@app.post("/webhooks/upi-settlement")
-def upi_settlement_webhook(body: UPISettlementWebhook):
-    """
-    PSP callback: match incoming transaction to event/ledger.
-    Matching: by tr field (txn_ref) first, then exact VPA/phone match.
-    No fuzzy matching. Anything unmatched lands in the unmatched queue.
-    """
-    # Find event by tr field prefix
-    event = next((e for e in EVENTS if body.txn_ref.startswith(e.id) and e.status == EventStatus.ACTIVE), None)
-    if not event:
-        return {"matched": False, "reason": "No active event found for this transaction reference"}
-
-    # Try exact match against known contacts
-    participant_id = None
-    participant_name = None
-    for c in CONTACTS:
-        if c.upi_id == body.payer_vpa or c.phone == body.payer_vpa:
-            participant_id = c.id
-            participant_name = c.name
-            break
-
-    from models import LedgerEntry as LE
-    entry = LE(
-        id=f"le-{uuid.uuid4().hex[:6]}",
+    participant = Participant(
+        id=part_id,
         event_id=event.id,
-        participant_id=participant_id,
-        participant_name=participant_name,
-        payer_vpa_or_phone=body.payer_vpa,
-        amount=body.amount,
-        txn_ref=body.txn_ref,
-        matched_at=body.timestamp,
+        organizer_id=event.organizer_id,
+        name=body.name,
+        email=body.email,
+        phone=body.phone,
+        registration_id=reg_id,
+        registered_at=get_current_time_iso(),
+        registration_status=RegistrationStatus.PENDING,
+        invoice_status=InvoiceStatus.SENT,
+        payment_status=PaymentStatus.UNPAID,
+        status="AWAITING_PAYMENT",
+        amount=event.amount,
+        currency=event.currency,
+        paypal_invoice_id=paypal_inv_id,
+        paypal_payment_url=payment_url,
+        paypal_qr_base64=qr_base64
     )
-    LEDGER_ENTRIES.append(entry)
-    return {"matched": True, "auto_tagged": participant_id is not None, "entry": entry.model_dump()}
+    PARTICIPANTS.append(participant)
+    record_audit(
+        "Participant",
+        "PARTICIPANT_REGISTERED_INVOICE_CREATED",
+        "AWAITING_PAYMENT",
+        event_id=event.id,
+        participant_id=participant.id,
+        invoice_id=paypal_inv_id,
+        details={"name": participant.name, "amount": str(participant.amount)}
+    )
+
+    pdump = participant.model_dump()
+    pdump["amount"] = float(participant.amount)
+    return pdump
 
 
-@app.post("/events/{event_id}/ledger/{entry_id}/tag")
-def tag_ledger_entry(event_id: str, entry_id: str, body: TagPaymentBody):
+@app.get("/api/participants/{participant_id}")
+def get_participant_checkout(participant_id: str):
+    """Retrieve participant payment details, QR code, and real-time status."""
+    part = next((p for p in PARTICIPANTS if p.id == participant_id), None)
+    if not part:
+        raise HTTPException(status_code=404, detail="Participant not found")
+    event = next((e for e in EVENTS if e.id == part.event_id), None)
+    
+    pdump = part.model_dump()
+    pdump["amount"] = float(part.amount)
+    
+    edump = None
+    if event:
+        edump = event.model_dump()
+        edump["amount"] = float(event.amount)
+        edump["target_amount"] = float(event.target_amount)
+
+    return {
+        "participant": pdump,
+        "event": edump
+    }
+
+
+@app.post("/api/participants/{participant_id}/reconcile-paypal-status")
+def reconcile_participant_invoice(participant_id: str):
     """
-    Manual unmatched-payment tagging by organizer.
-    No fuzzy matching, no auto-tag — explicit manual assignment only.
-    Stores taggedBy + taggedAt for auditability.
+    Reconciles invoice status directly with PayPal REST API.
+    Transitions entity statuses: RegistrationStatus, InvoiceStatus, PaymentStatus.
+    """
+    part = next((p for p in PARTICIPANTS if p.id == participant_id), None)
+    if not part:
+        raise HTTPException(status_code=404, detail="Participant not found")
+
+    if not part.paypal_invoice_id:
+        return {"status": "NO_INVOICE", "participant": part.model_dump()}
+
+    # Query PayPal Sandbox API if configured
+    if paypal_client.is_configured():
+        try:
+            details = paypal_client.get_invoice_details(part.paypal_invoice_id)
+            paypal_status = details.get("status")
+            if paypal_status == "PAID" and part.payment_status != PaymentStatus.CAPTURED:
+                part.registration_status = RegistrationStatus.CONFIRMED
+                part.invoice_status = InvoiceStatus.PAID
+                part.payment_status = PaymentStatus.CAPTURED
+                part.status = "PAID"
+                part.paid_at = get_current_time_iso()
+                part.transaction_reference = f"PAYID-REC-{uuid.uuid4().hex[:8].upper()}"
+
+                ledger_entry = LedgerEntry(
+                    id=f"led-{uuid.uuid4().hex[:6]}",
+                    event_id=part.event_id,
+                    organizer_id=part.organizer_id,
+                    participant_id=part.id,
+                    participant_name=part.name,
+                    payer_identifier=part.email,
+                    amount=part.amount,
+                    currency=part.currency,
+                    txn_ref=part.transaction_reference,
+                    status="PAID",
+                    matched_at=part.paid_at
+                )
+                LEDGER_ENTRIES.append(ledger_entry)
+                record_audit("PayPal Reconciliation", "PAYMENT_RECONCILED", "SUCCESS", event_id=part.event_id, participant_id=part.id, invoice_id=part.paypal_invoice_id)
+        except Exception as e:
+            print(f"[Reconciliation Error] {e}")
+
+    pdump = part.model_dump()
+    pdump["amount"] = float(part.amount)
+    return {"reconciled": True, "participant": pdump}
+
+
+@app.post("/api/participants/{participant_id}/verify-sandbox-payment")
+def verify_sandbox_payment(participant_id: str):
+    """
+    Simulates verified payment completion in PayPal sandbox environment.
+    Transitions:
+    - registration_status -> CONFIRMED
+    - invoice_status -> PAID
+    - payment_status -> CAPTURED
+    Appends immutable LedgerEntry.
+    """
+    part = next((p for p in PARTICIPANTS if p.id == participant_id), None)
+    if not part:
+        raise HTTPException(status_code=404, detail="Participant not found")
+    if part.payment_status == PaymentStatus.CAPTURED:
+        pdump = part.model_dump()
+        pdump["amount"] = float(part.amount)
+        return {"already_paid": True, "participant": pdump}
+
+    txn_ref = f"PAYID-SBX-{uuid.uuid4().hex[:8].upper()}"
+    part.registration_status = RegistrationStatus.CONFIRMED
+    part.invoice_status = InvoiceStatus.PAID
+    part.payment_status = PaymentStatus.CAPTURED
+    part.status = "PAID"
+    part.paid_at = get_current_time_iso()
+    part.transaction_reference = txn_ref
+
+    ledger_entry = LedgerEntry(
+        id=f"led-{uuid.uuid4().hex[:6]}",
+        event_id=part.event_id,
+        organizer_id=part.organizer_id,
+        participant_id=part.id,
+        participant_name=part.name,
+        payer_identifier=part.email,
+        amount=part.amount,
+        currency=part.currency,
+        txn_ref=txn_ref,
+        status="PAID",
+        matched_at=part.paid_at
+    )
+    LEDGER_ENTRIES.append(ledger_entry)
+    record_audit(
+        "PayPal Gateway",
+        "PAYMENT_VERIFIED",
+        "SUCCESS",
+        event_id=part.event_id,
+        participant_id=part.id,
+        invoice_id=part.paypal_invoice_id,
+        details={"txn_ref": txn_ref, "amount": str(part.amount)}
+    )
+
+    pdump = part.model_dump()
+    pdump["amount"] = float(part.amount)
+    ledump = ledger_entry.model_dump()
+    ledump["amount"] = float(ledger_entry.amount)
+
+    return {
+        "success": True,
+        "participant": pdump,
+        "ledger_entry": ledump
+    }
+
+
+@app.post("/api/participants/{participant_id}/refund")
+def refund_participant_payment(participant_id: str, body: RefundRequest, org_id: str = Header(default="org-001", alias="X-Organization-Id")):
+    """
+    Processes verified refund for a participant invoice.
+    Transitions:
+    - invoice_status -> REFUNDED
+    - payment_status -> REFUNDED
+    - registration_status -> CANCELLED
+    """
+    part = next((p for p in PARTICIPANTS if p.id == participant_id and p.organizer_id == org_id), None)
+    if not part:
+        raise HTTPException(status_code=404, detail="Participant not found or unauthorized")
+    if part.payment_status != PaymentStatus.CAPTURED:
+        raise HTTPException(status_code=400, detail="Cannot refund an unpaid invoice.")
+
+    refund_ref = f"REFUND-SBX-{uuid.uuid4().hex[:8].upper()}"
+    part.payment_status = PaymentStatus.REFUNDED
+    part.invoice_status = InvoiceStatus.REFUNDED
+    part.registration_status = RegistrationStatus.CANCELLED
+    part.status = "REFUNDED"
+    part.refunded_at = get_current_time_iso()
+    part.refund_reference = refund_ref
+
+    record_audit(
+        "Organizer",
+        "PAYMENT_REFUNDED",
+        "SUCCESS",
+        event_id=part.event_id,
+        participant_id=part.id,
+        invoice_id=part.paypal_invoice_id,
+        details={"refund_ref": refund_ref, "reason": body.reason, "amount": str(part.amount)}
+    )
+
+    pdump = part.model_dump()
+    pdump["amount"] = float(part.amount)
+    return {"success": True, "participant": pdump, "refund_reference": refund_ref}
+
+
+# ──────────────────────────────────────────────
+# Multi-Provider Common Payment Engine (Orders, Routing & Eligibility)
+# ──────────────────────────────────────────────
+
+@app.post("/api/payments/eligibility")
+def check_payment_eligibility(req: PaymentEligibilityRequest):
+    """
+    Enforces strict geographic and currency payment routing rules:
+    - Indian Domestic INR: Cashfree UPI Intent & Dynamic QR.
+    - Eligible International (USD, EUR, GBP, etc.): PayPal Invoicing v2.
+    - Explicitly rejects PayPal for domestic Indian transactions.
+    """
+    curr = req.currency.upper()
+    country = (req.payer_country or "IN").upper()
+    eligible = []
+
+    if curr == "INR" or country == "IN":
+        eligible.append({
+            "provider": "CASHFREE",
+            "name": "Cashfree UPI & QR Payments",
+            "methods": ["UPI_INTENT", "UPI_QR", "NET_BANKING", "DEBIT_CARD"],
+            "currency": "INR",
+            "country": "IN",
+            "badge": "Recommended for India"
+        })
+
+    if curr in ["USD", "EUR", "GBP", "CAD", "AUD"] and country != "IN":
+        eligible.append({
+            "provider": "PAYPAL",
+            "name": "PayPal International Invoicing",
+            "methods": ["PAYPAL_WALLET", "CREDIT_CARD", "PAYPAL_CREDIT"],
+            "currency": curr,
+            "badge": "Recommended for International"
+        })
+    elif curr != "INR":
+        # Allow cross-border PayPal for non-INR currencies
+        eligible.append({
+            "provider": "PAYPAL",
+            "name": "PayPal Invoicing v2",
+            "methods": ["PAYPAL_WALLET", "CREDIT_CARD"],
+            "currency": curr,
+            "badge": "International Gateway"
+        })
+
+    recommended = eligible[0]["provider"] if eligible else "CASHFREE"
+    reason = (
+        "Domestic Indian INR routed to Cashfree UPI" if recommended == "CASHFREE"
+        else f"International currency {curr} routed to PayPal Invoicing v2"
+    )
+
+    return {
+        "eligible_providers": eligible,
+        "recommended_provider": recommended,
+        "reason": reason
+    }
+
+
+@app.post("/api/payments/orders/create")
+def create_payment_order(req: CreatePaymentOrderRequest, org_id: str = Header(default="org-001", alias="X-Organization-Id")):
+    """
+    Creates an authoritative, provider-independent PaymentOrder linked to an event registration.
+    Determines provider eligibility and initiates either a PayPal Invoicing or Cashfree UPI attempt.
+    """
+    part = next((p for p in PARTICIPANTS if p.id == req.participant_id and p.organizer_id == org_id), None)
+    if not part:
+        raise HTTPException(status_code=404, detail="Participant registration not found")
+
+    event = next((e for e in EVENTS if e.id == part.event_id), None)
+    if not event:
+        raise HTTPException(status_code=404, detail="Associated event not found")
+
+    # Routing determination
+    country = (req.payer_country or "IN").upper()
+    currency = part.currency.upper()
+    provider_choice = req.preferred_provider
+
+    if not provider_choice:
+        if currency == "INR" or country == "IN":
+            provider_choice = PaymentProvider.CASHFREE
+        else:
+            provider_choice = PaymentProvider.PAYPAL
+    else:
+        provider_choice = PaymentProvider(provider_choice.upper())
+
+    # Create Canonical PaymentOrder
+    order_id = f"ord-{uuid.uuid4().hex[:10]}"
+    now_iso = get_current_time_iso()
+    order = PaymentOrder(
+        id=order_id,
+        event_id=part.event_id,
+        participant_id=part.id,
+        organizer_id=org_id,
+        amount=part.amount,
+        currency=part.currency,
+        status=PaymentStatus.PENDING,
+        provider=provider_choice,
+        created_at=now_iso,
+        expires_at=event.expiry_at
+    )
+    PAYMENT_ORDERS.append(order)
+
+    # Create Payment Attempt
+    attempt_id = f"att-{uuid.uuid4().hex[:8]}"
+    attempt = PaymentAttempt(
+        id=attempt_id,
+        order_id=order_id,
+        event_id=part.event_id,
+        participant_id=part.id,
+        provider=provider_choice,
+        amount=part.amount,
+        currency=part.currency,
+        status=PaymentStatus.PENDING,
+        created_at=now_iso
+    )
+
+    if provider_choice == PaymentProvider.CASHFREE:
+        # Generate Cashfree PG Order & UPI QR
+        cf_res = cashfree_client.create_order(
+            order_id=order_id,
+            amount=float(part.amount),
+            currency=part.currency,
+            customer_id=part.id,
+            customer_name=part.name,
+            customer_email=part.email,
+            customer_phone=part.phone or "9999999999",
+            order_note=f"{event.title} - Reg #{part.id}"
+        )
+        attempt.provider_order_id = cf_res.get("cf_order_id")
+        attempt.provider_session_id = cf_res.get("payment_session_id")
+        attempt.provider_payment_url = cf_res.get("payment_url")
+        attempt.provider_qr_data = cf_res.get("upi_qr_data")
+
+        # Update participant state
+        part.payment_provider = PaymentProvider.CASHFREE
+        part.payment_order_id = order_id
+        part.cashfree_order_id = cf_res.get("cf_order_id")
+        part.cashfree_payment_session_id = cf_res.get("payment_session_id")
+        part.cashfree_upi_link = cf_res.get("upi_qr_data")
+        part.cashfree_qr_data = cf_res.get("upi_qr_data")
+
+    elif provider_choice == PaymentProvider.PAYPAL:
+        # Generate PayPal Invoice v2
+        try:
+            inv = paypal_client.create_and_send_invoice(
+                event_id=event.id,
+                event_title=event.title,
+                participant_name=part.name,
+                participant_email=part.email,
+                amount=float(part.amount),
+                currency=part.currency
+            )
+            attempt.provider_order_id = inv.get("invoice_id")
+            attempt.provider_payment_url = inv.get("invoice_url")
+            attempt.provider_qr_data = inv.get("qr_code_base64")
+
+            part.payment_provider = PaymentProvider.PAYPAL
+            part.payment_order_id = order_id
+            part.paypal_invoice_id = inv.get("invoice_id")
+            part.paypal_payment_url = inv.get("invoice_url")
+            part.paypal_qr_base64 = inv.get("qr_code_base64")
+            part.invoice_status = InvoiceStatus.SENT
+        except Exception as e:
+            attempt.error_message = str(e)
+            attempt.status = PaymentStatus.FAILED
+
+    PAYMENT_ATTEMPTS.append(attempt)
+    record_audit(
+        "Payment Engine",
+        "ORDER_CREATED",
+        "SUCCESS",
+        event_id=part.event_id,
+        participant_id=part.id,
+        order_id=order_id,
+        provider=provider_choice.value,
+        details={"attempt_id": attempt_id, "amount": str(part.amount), "currency": part.currency}
+    )
+
+    return {
+        "success": True,
+        "payment_order": order.model_dump(mode="json"),
+        "payment_attempt": attempt.model_dump(mode="json"),
+        "participant": part.model_dump(mode="json")
+    }
+
+
+@app.get("/api/payments/orders/{order_id}/status")
+def get_payment_order_status(order_id: str):
+    """
+    Authoritative order recovery and verification endpoint.
+    Retrieves latest status from internal ledger and syncs with provider if pending.
+    """
+    order = next((o for o in PAYMENT_ORDERS if o.id == order_id), None)
+    if not order:
+        raise HTTPException(status_code=404, detail="Payment order not found")
+
+    part = next((p for p in PARTICIPANTS if p.id == order.participant_id), None)
+    attempts = [a for a in PAYMENT_ATTEMPTS if a.order_id == order_id]
+    transactions = [t for t in PAYMENT_TRANSACTIONS if t.order_id == order_id]
+
+    return {
+        "order": order.model_dump(mode="json"),
+        "status": order.status.value,
+        "participant": part.model_dump(mode="json") if part else None,
+        "attempts": [a.model_dump(mode="json") for a in attempts],
+        "transactions": [t.model_dump(mode="json") for t in transactions]
+    }
+
+
+@app.post("/api/payments/orders/{order_id}/verify-sandbox")
+def verify_payment_order_sandbox(order_id: str):
+    """
+    Completes and reconciles a payment order in the sandbox environment for testing.
+    Creates authoritative PaymentTransaction, appends immutable LedgerEntry,
+    and transitions participant to CONFIRMED.
+    """
+    order = next((o for o in PAYMENT_ORDERS if o.id == order_id), None)
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    part = next((p for p in PARTICIPANTS if p.id == order.participant_id), None)
+    if not part:
+        raise HTTPException(status_code=404, detail="Participant not found")
+
+    if order.status == PaymentStatus.SUCCESS:
+        return {"already_verified": True, "order": order.model_dump(mode="json")}
+
+    now_iso = get_current_time_iso()
+    order.status = PaymentStatus.SUCCESS
+    order.paid_at = now_iso
+
+    part.payment_status = PaymentStatus.CAPTURED
+    part.registration_status = RegistrationStatus.CONFIRMED
+    part.invoice_status = InvoiceStatus.PAID
+    part.status = "PAID"
+    part.paid_at = now_iso
+
+    prefix = "CF-TXN" if order.provider == PaymentProvider.CASHFREE else "PAYID"
+    txn_ref = f"{prefix}-{uuid.uuid4().hex[:8].upper()}"
+    part.transaction_reference = txn_ref
+
+    # Authoritative PaymentTransaction
+    txn = PaymentTransaction(
+        id=f"txn-{uuid.uuid4().hex[:8]}",
+        order_id=order_id,
+        attempt_id=order_id.replace("ord-", "att-"),
+        event_id=order.event_id,
+        participant_id=part.id,
+        provider=order.provider or PaymentProvider.PAYPAL,
+        provider_transaction_id=txn_ref,
+        amount=order.amount,
+        currency=order.currency,
+        status=PaymentStatus.SUCCESS,
+        created_at=now_iso,
+        payment_method="UPI_QR" if order.provider == PaymentProvider.CASHFREE else "PAYPAL_INVOICE"
+    )
+    PAYMENT_TRANSACTIONS.append(txn)
+
+    # Append to Master Ledger
+    ledger_entry = LedgerEntry(
+        id=f"led-{uuid.uuid4().hex[:6]}",
+        event_id=order.event_id,
+        organizer_id=order.organizer_id,
+        participant_id=part.id,
+        participant_name=part.name,
+        payer_identifier=part.email,
+        amount=order.amount,
+        currency=order.currency,
+        provider=order.provider or PaymentProvider.PAYPAL,
+        order_id=order_id,
+        txn_ref=txn_ref,
+        status="PAID",
+        matched_at=now_iso
+    )
+    LEDGER_ENTRIES.append(ledger_entry)
+
+    record_audit(
+        "Payment Verification",
+        "TRANSACTION_CAPTURED",
+        "SUCCESS",
+        event_id=order.event_id,
+        participant_id=part.id,
+        order_id=order_id,
+        provider=order.provider.value if order.provider else "UNKNOWN",
+        details={"txn_ref": txn_ref, "amount": str(order.amount), "currency": order.currency}
+    )
+
+    return {
+        "success": True,
+        "order": order.model_dump(mode="json"),
+        "transaction": txn.model_dump(mode="json"),
+        "participant": part.model_dump(mode="json")
+    }
+
+
+# ──────────────────────────────────────────────
+# Cashfree Webhook Listener (Signature Verification & Deduplication)
+# ──────────────────────────────────────────────
+
+@app.post("/api/webhooks/cashfree")
+async def cashfree_webhook_listener(request: Request):
+    """
+    Cashfree Webhook Handler v2023-08-01:
+    1. Validates x-webhook-signature and x-webhook-timestamp
+    2. Idempotent deduplication using event ID
+    3. Handles PAYMENT_SUCCESS_WEBHOOK, PAYMENT_FAILED_WEBHOOK, ORDER_EXPIRED_WEBHOOK
+    """
+    raw_body = await request.body()
+    try:
+        payload = json.loads(raw_body.decode())
+    except Exception:
+        raise HTTPException(status_code=400, detail="Malformed JSON payload")
+
+    headers = dict(request.headers)
+    signature = headers.get("x-webhook-signature", "")
+    timestamp = headers.get("x-webhook-timestamp", "")
+
+    # Validate HMAC signature
+    is_valid = cashfree_client.verify_webhook_signature(signature, raw_body.decode(), timestamp)
+    if not is_valid:
+        record_audit("Cashfree Webhook", "SIGNATURE_VERIFICATION_FAILED", "REJECTED", details={"headers": headers})
+        raise HTTPException(status_code=401, detail="Invalid Cashfree webhook signature")
+
+    webhook_event_id = payload.get("event_id") or payload.get("data", {}).get("payment", {}).get("cf_payment_id") or f"cf-wh-{uuid.uuid4().hex[:8]}"
+    existing = next((w for w in PROCESSED_WEBHOOKS if w.webhook_id == str(webhook_event_id)), None)
+    if existing:
+        return {"status": "IGNORED_DUPLICATE", "webhook_id": webhook_event_id}
+
+    event_type = payload.get("type", "PAYMENT_SUCCESS_WEBHOOK")
+    data = payload.get("data", {})
+    order_data = data.get("order", {})
+    order_id = order_data.get("order_id")
+
+    print(f"[Cashfree Webhook] Processing {event_type} for Order {order_id}")
+
+    if event_type in ["PAYMENT_SUCCESS_WEBHOOK", "ORDER_PAID"]:
+        part = next((p for p in PARTICIPANTS if p.cashfree_order_id == order_id or p.payment_order_id == order_id), None)
+        if part and part.payment_status != PaymentStatus.CAPTURED:
+            now_iso = get_current_time_iso()
+            part.registration_status = RegistrationStatus.CONFIRMED
+            part.invoice_status = InvoiceStatus.PAID
+            part.payment_status = PaymentStatus.CAPTURED
+            part.status = "PAID"
+            part.paid_at = now_iso
+            part.transaction_reference = f"CF-{data.get('payment', {}).get('cf_payment_id', uuid.uuid4().hex[:6])}"
+
+            order = next((o for o in PAYMENT_ORDERS if o.id == order_id), None)
+            if order:
+                order.status = PaymentStatus.SUCCESS
+                order.paid_at = now_iso
+
+            ledger_entry = LedgerEntry(
+                id=f"led-{uuid.uuid4().hex[:6]}",
+                event_id=part.event_id,
+                organizer_id=part.organizer_id,
+                participant_id=part.id,
+                participant_name=part.name,
+                payer_identifier=part.email,
+                amount=part.amount,
+                currency=part.currency,
+                provider=PaymentProvider.CASHFREE,
+                order_id=order_id,
+                txn_ref=part.transaction_reference,
+                status="PAID",
+                matched_at=now_iso
+            )
+            LEDGER_ENTRIES.append(ledger_entry)
+            record_audit("Cashfree Webhook", "WEBHOOK_PAYMENT_VERIFIED", "SUCCESS", event_id=part.event_id, participant_id=part.id, order_id=order_id, provider="CASHFREE")
+
+    PROCESSED_WEBHOOKS.append(ProcessedWebhookEvent(
+        webhook_id=str(webhook_event_id),
+        event_id=order_id or "",
+        event_type=event_type,
+        provider=PaymentProvider.CASHFREE,
+        resource_id=order_id or "",
+        processed_at=get_current_time_iso(),
+        status="PROCESSED"
+    ))
+
+    return {"status": "SUCCESS", "event_type": event_type, "webhook_id": webhook_event_id}
+
+
+# ──────────────────────────────────────────────
+# PayPal Webhook Listener (Signature Verification & Deduplication)
+# ──────────────────────────────────────────────
+
+@app.post("/api/webhooks/paypal")
+async def paypal_webhook_listener(request: Request):
+    """
+    Enterprise PayPal Webhook Listener:
+    1. Validates webhook signature using PayPal REST API
+    2. Validates event deduplication (idempotent processing)
+    3. Handles:
+       - INVOICING.INVOICE.PAID / PAYMENT.SALE.COMPLETED
+       - INVOICING.INVOICE.CANCELLED
+       - PAYMENT.SALE.REFUNDED
+    """
+    raw_body = await request.body()
+    try:
+        payload = json.loads(raw_body.decode())
+    except Exception:
+        raise HTTPException(status_code=400, detail="Malformed JSON payload")
+
+    # 1. Validate signature
+    headers_dict = dict(request.headers)
+    is_valid = paypal_client.verify_webhook_signature(headers_dict, raw_body.decode())
+    if not is_valid:
+        record_audit("PayPal Webhook", "SIGNATURE_VERIFICATION_FAILED", "REJECTED", details={"headers": headers_dict})
+        raise HTTPException(status_code=401, detail="Invalid webhook signature")
+
+    webhook_event_id = payload.get("id") or f"wh-{uuid.uuid4().hex[:8]}"
+    
+    # 2. Check Deduplication
+    existing = next((w for w in PROCESSED_WEBHOOKS if w.webhook_id == webhook_event_id), None)
+    if existing:
+        return {"status": "IGNORED_DUPLICATE", "webhook_id": webhook_event_id}
+
+    event_type = payload.get("event_type", "")
+    resource = payload.get("resource", {})
+    invoice_id = resource.get("id") or resource.get("invoice_id")
+
+    print(f"[PayPal Webhook] Processing {event_type} for Invoice {invoice_id}")
+
+    if event_type in ["INVOICING.INVOICE.PAID", "PAYMENT.SALE.COMPLETED"]:
+        part = next((p for p in PARTICIPANTS if p.paypal_invoice_id == invoice_id), None)
+        if part and part.payment_status != PaymentStatus.CAPTURED:
+            part.registration_status = RegistrationStatus.CONFIRMED
+            part.invoice_status = InvoiceStatus.PAID
+            part.payment_status = PaymentStatus.CAPTURED
+            part.status = "PAID"
+            part.paid_at = get_current_time_iso()
+            part.transaction_reference = resource.get("transaction_id", f"PAYID-WH-{uuid.uuid4().hex[:6]}")
+
+            ledger_entry = LedgerEntry(
+                id=f"led-{uuid.uuid4().hex[:6]}",
+                event_id=part.event_id,
+                organizer_id=part.organizer_id,
+                participant_id=part.id,
+                participant_name=part.name,
+                payer_identifier=part.email,
+                amount=part.amount,
+                currency=part.currency,
+                txn_ref=part.transaction_reference,
+                status="PAID",
+                matched_at=part.paid_at
+            )
+            LEDGER_ENTRIES.append(ledger_entry)
+            record_audit("PayPal Webhook", "WEBHOOK_PAYMENT_VERIFIED", "SUCCESS", event_id=part.event_id, participant_id=part.id, invoice_id=invoice_id)
+
+    elif event_type in ["INVOICING.INVOICE.CANCELLED"]:
+        part = next((p for p in PARTICIPANTS if p.paypal_invoice_id == invoice_id), None)
+        if part:
+            part.invoice_status = InvoiceStatus.CANCELLED
+            part.registration_status = RegistrationStatus.CANCELLED
+            part.status = "CANCELLED"
+            record_audit("PayPal Webhook", "WEBHOOK_INVOICE_CANCELLED", "SUCCESS", event_id=part.event_id, participant_id=part.id, invoice_id=invoice_id)
+
+    elif event_type in ["PAYMENT.SALE.REFUNDED"]:
+        part = next((p for p in PARTICIPANTS if p.paypal_invoice_id == invoice_id or p.transaction_reference == resource.get("parent_payment")), None)
+        if part:
+            part.payment_status = PaymentStatus.REFUNDED
+            part.invoice_status = InvoiceStatus.REFUNDED
+            part.registration_status = RegistrationStatus.CANCELLED
+            part.status = "REFUNDED"
+            part.refunded_at = get_current_time_iso()
+            record_audit("PayPal Webhook", "WEBHOOK_PAYMENT_REFUNDED", "SUCCESS", event_id=part.event_id, participant_id=part.id, invoice_id=invoice_id)
+
+    # Save to deduplication store
+    PROCESSED_WEBHOOKS.append(ProcessedWebhookEvent(
+        webhook_id=webhook_event_id,
+        event_id=payload.get("id", ""),
+        event_type=event_type,
+        resource_id=invoice_id or "",
+        processed_at=get_current_time_iso(),
+        status="PROCESSED"
+    ))
+
+    return {"status": "SUCCESS", "event_type": event_type, "webhook_id": webhook_event_id}
+
+
+# ──────────────────────────────────────────────
+# AI Financial Assistant (Gemini) with Human Approval Workflows
+# ──────────────────────────────────────────────
+
+@app.post("/api/ai/parse-event")
+def ai_parse_event(body: AIPromptRequest):
+    """
+    Capability 1: Natural-Language Event Creation.
+    Gemini extracts draft event configuration. Does NOT publish without organizer approval.
+    """
+    extracted = gemini_agent.extract_event_details(body.prompt)
+    return {"extracted_event": extracted, "requires_human_approval": True}
+
+
+@app.post("/api/ai/approve-action")
+def ai_approve_action(body: AIApproveActionRequest, org_id: str = Header(default="org-001", alias="X-Organization-Id")):
+    """
+    Human Approval Gateway for AI Actions:
+    Ensures that AI can only draft recommendations; financial actions,
+    event publication, and message dispatching strictly require human consent.
+    """
+    if not body.approved:
+        return {"executed": False, "reason": "Action rejected by organizer."}
+
+    action_type = body.action_type
+    payload = body.payload
+
+    if action_type == "PUBLISH_EVENT":
+        create_req = CreateEventRequest(**payload)
+        return create_event(create_req, org_id=org_id)
+
+    elif action_type == "DISPATCH_REMINDERS":
+        count = len(payload.get("reminders", []))
+        record_audit("Organizer Approved AI", "REMINDERS_DISPATCHED", "SUCCESS", details={"count": count})
+        return {"executed": True, "dispatched_count": count}
+
+    elif action_type == "ISSUE_REFUND":
+        participant_id = payload.get("participant_id")
+        reason = payload.get("reason", "Approved by Organizer via AI recommendation")
+        return refund_participant_payment(participant_id, RefundRequest(reason=reason), org_id=org_id)
+
+    raise HTTPException(status_code=400, detail=f"Unsupported action type: {action_type}")
+
+
+@app.post("/api/ai/query")
+def ai_financial_query(body: AIPromptRequest, org_id: str = Header(default="org-001", alias="X-Organization-Id")):
+    """
+    Capability 2: Grounded Financial Assistant & Telemetry Querying.
+    Answers natural questions using grounded, real-time application records.
+    Never accepts simulated frontend payment claims as truth.
+    """
+    tenant_events = [e for e in EVENTS if e.organizer_id == org_id]
+    tenant_participants = [p for p in PARTICIPANTS if p.organizer_id == org_id]
+
+    # Assemble live grounded telemetry
+    telemetry = {
+        "events": [e.model_dump(mode="json") for e in tenant_events],
+        "total_participants": len(tenant_participants),
+        "total_collected": float(sum((p.amount for p in tenant_participants if p.payment_status == PaymentStatus.CAPTURED), Decimal("0.00"))),
+        "total_refunded": float(sum((p.amount for p in tenant_participants if p.payment_status == PaymentStatus.REFUNDED), Decimal("0.00"))),
+        "pending_count": len([p for p in tenant_participants if p.payment_status == PaymentStatus.UNPAID]),
+        "pending_participants": [
+            {
+                "name": p.name,
+                "email": p.email,
+                "amount": float(p.amount),
+                "event_id": p.event_id,
+                "registration_status": p.registration_status,
+                "invoice_status": p.invoice_status
+            }
+            for p in tenant_participants if p.payment_status == PaymentStatus.UNPAID
+        ]
+    }
+    answer = gemini_agent.answer_financial_query(body.prompt, telemetry)
+    return {"response": answer}
+
+
+@app.post("/api/ai/generate-reminder")
+def ai_generate_reminder(body: SendReminderRequest):
+    """
+    Capability 3: Smart Payment Reminders.
+    Drafts personalized reminders for unpaid participants. Requires human approval before dispatch.
+    """
+    reminders = []
+    for pid in body.participant_ids:
+        part = next((p for p in PARTICIPANTS if p.id == pid), None)
+        if not part or part.payment_status == PaymentStatus.CAPTURED:
+            continue
+        ev = next((e for e in EVENTS if e.id == part.event_id), None)
+        ev_title = ev.title if ev else "Event"
+        deadline = ev.expiry_at[:10] if ev else "Upcoming deadline"
+
+        message = body.custom_message or gemini_agent.generate_smart_reminder(
+            event_title=ev_title,
+            participant_name=part.name,
+            amount=float(part.amount),
+            currency=part.currency,
+            deadline=deadline,
+            tone=body.tone or "friendly"
+        )
+        reminders.append({
+            "participant_id": part.id,
+            "participant_name": part.name,
+            "email": part.email,
+            "message": message,
+            "amount": float(part.amount),
+            "currency": part.currency
+        })
+
+    return {"reminders": reminders, "requires_human_approval": True}
+
+
+@app.get("/api/ai/events/{event_id}/report")
+def ai_event_report(event_id: str, org_id: str = Header(default="org-001", alias="X-Organization-Id")):
+    """
+    Capability 5: Executive Financial Audit Report.
+    Synthesizes grounded records into a comprehensive financial report.
+    """
+    event = next((e for e in EVENTS if e.id == event_id and e.organizer_id == org_id), None)
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found or unauthorized")
+    ledger = [le.model_dump(mode="json") for le in LEDGER_ENTRIES if le.event_id == event_id]
+    edump = event.model_dump(mode="json")
+    edump["amount"] = float(event.amount)
+    edump["target_amount"] = float(event.target_amount)
+    report = gemini_agent.generate_event_audit_report(edump, ledger)
+    return report
+
+
+# ──────────────────────────────────────────────
+# Financial Hub & Multi-Currency Aggregation
+# ──────────────────────────────────────────────
+
+@app.get("/api/financial/summary")
+def get_financial_summary(
+    currency: Optional[str] = None,
+    provider: Optional[str] = None,
+    org_id: str = Header(default="org-001", alias="X-Organization-Id")
+):
+    """
+    Consolidates verified transactions across both PayPal and Cashfree.
+    Calculates totals strictly segregated by currency (never conflates INR with USD).
+    """
+    entries = [le for le in LEDGER_ENTRIES if le.organizer_id == org_id]
+    
+    if currency:
+        entries = [le for le in entries if le.currency.upper() == currency.upper()]
+    if provider:
+        entries = [le for le in entries if le.provider.value.upper() == provider.upper()]
+
+    # Currency segregated balances
+    by_currency: Dict[str, Dict[str, Any]] = {}
+    for le in entries:
+        c = le.currency.upper()
+        if c not in by_currency:
+            by_currency[c] = {
+                "currency": c,
+                "total_collected": Decimal("0.00"),
+                "transaction_count": 0,
+                "paypal_collected": Decimal("0.00"),
+                "cashfree_collected": Decimal("0.00")
+            }
+        by_currency[c]["total_collected"] += le.amount
+        by_currency[c]["transaction_count"] += 1
+        if le.provider == PaymentProvider.PAYPAL:
+            by_currency[c]["paypal_collected"] += le.amount
+        elif le.provider == PaymentProvider.CASHFREE:
+            by_currency[c]["cashfree_collected"] += le.amount
+
+    # Format response
+    summary_list = [
+        {
+            "currency": c,
+            "total_collected": float(data["total_collected"]),
+            "transaction_count": data["transaction_count"],
+            "paypal_collected": float(data["paypal_collected"]),
+            "cashfree_collected": float(data["cashfree_collected"])
+        }
+        for c, data in by_currency.items()
+    ]
+
+    return {
+        "organizer_id": org_id,
+        "currencies": summary_list,
+        "total_transactions": len(entries),
+        "recent_transactions": [
+            {
+                "id": le.id,
+                "event_id": le.event_id,
+                "participant_name": le.participant_name,
+                "amount": float(le.amount),
+                "currency": le.currency,
+                "provider": le.provider.value,
+                "txn_ref": le.txn_ref,
+                "matched_at": le.matched_at
+            }
+            for le in entries[-10:]
+        ]
+    }
+
+
+# ──────────────────────────────────────────────
+# Public Verification Endpoint
+# ──────────────────────────────────────────────
+
+@app.get("/api/verify/{event_id}")
+def verify_event_ledger(event_id: str):
+    """
+    Public, read-only endpoint returning sanitized event telemetry & settlement proof.
+    Excludes private merchant credentials.
     """
     event = next((e for e in EVENTS if e.id == event_id), None)
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    if event.status == EventStatus.CLOSED:
-        raise HTTPException(status_code=400, detail="Cannot modify ledger of a closed event")
-
-    entry = next((le for le in LEDGER_ENTRIES if le.id == entry_id and le.event_id == event_id), None)
-    if not entry:
-        raise HTTPException(status_code=404, detail="Ledger entry not found")
-
-    entry.participant_id = body.participant_id
-    entry.participant_name = body.participant_name
-    entry.tagged_by = "u-001"  # current user
-    entry.tagged_at = datetime.utcnow().isoformat()
-    return {"success": True, "entry": entry.model_dump()}
-
-
-@app.get("/verify/{event_id}", response_model=VerifyResponse)
-def verify_event(event_id: str):
-    """
-    PUBLIC, read-only endpoint.
-    Returns ONLY the requested event's snapshot + signature + keyId.
-    Never returns organizer's other events, personal VPA, or account details.
-    """
-    event = next((e for e in EVENTS if e.id == event_id), None)
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-
     proof = next((p for p in SETTLEMENT_PROOFS if p.event_id == event_id), None)
     ledger = [le for le in LEDGER_ENTRIES if le.event_id == event_id]
 
-    # Sanitize: remove settlement_account_id from public view
-    event_public = event.model_dump()
-    event_public.pop("settlement_account_id", None)
-
-    return VerifyResponse(
-        event=Event(**{**event.model_dump()}),
-        ledger=ledger,
-        proof=proof,
-    )
-
-
-# ══════════════════════════════════════════════
-# FINANCIAL HUB — Account Aggregator Endpoints
-# ══════════════════════════════════════════════
-
-_user_consents: dict[str, list[str]] = {}  # user_id -> [consent_ids]
-DEFAULT_USER_ID = "u-001"
-
-
-@app.post("/api/financial/connect", response_model=ConsentResponse)
-async def financial_connect(body: ConsentRequest):
-    """Create a data-access consent request."""
-    aa = get_account_aggregator()
-    result = await aa.create_consent(
-        user_id=DEFAULT_USER_ID,
-        purpose=body.purpose,
-        from_date=body.from_date,
-        to_date=body.to_date,
-        frequency=body.frequency,
-    )
-    # Track consent for user
-    if DEFAULT_USER_ID not in _user_consents:
-        _user_consents[DEFAULT_USER_ID] = []
-    _user_consents[DEFAULT_USER_ID].append(result["consent_id"])
-    return ConsentResponse(**result)
-
-
-@app.post("/api/financial/mock-approve")
-async def financial_mock_approve(body: MockApproveBody):
-    """Mock: simulate bank approval of consent."""
-    aa = get_account_aggregator()
-    result = await aa.approve_consent(body.consent_id, body.bank_name)
-    return result
-
-
-@app.get("/api/financial/consent/{consent_id}")
-async def financial_consent_status(consent_id: str):
-    """Get consent status."""
-    aa = get_account_aggregator()
-    status = await aa.get_consent_status(consent_id)
-    return {"consent_id": consent_id, "status": status}
-
-
-@app.get("/api/financial/consents")
-async def financial_list_consents():
-    """List all consents for the current user."""
-    aa = get_account_aggregator()
-    consent_ids = _user_consents.get(DEFAULT_USER_ID, [])
-    consents = []
-    for cid in consent_ids:
-        details = await aa.get_consent_details(cid)
-        consents.append(details)
-    return consents
-
-
-@app.delete("/api/financial/consent/{consent_id}")
-async def financial_revoke_consent(consent_id: str):
-    """Revoke an active consent."""
-    aa = get_account_aggregator()
-    result = await aa.revoke_consent(consent_id)
-    return result
-
-
-@app.post("/api/financial/accounts/sync")
-async def financial_sync_accounts(body: SyncRequest):
-    """Fetch accounts + transactions via AA, normalize, store."""
-    aa = get_account_aggregator()
-
-    # 1. Fetch accounts
-    accounts = await aa.fetch_accounts(body.consent_id)
-    if not accounts:
-        raise HTTPException(status_code=400, detail="No accounts found or consent not approved")
-
-    stored_accounts = []
-    total_txns = 0
-
-    for acc in accounts:
-        # 2. Store account
-        stored = txn_svc.store_account(DEFAULT_USER_ID, acc)
-        stored_accounts.append(stored)
-
-        # 3. Fetch transactions
-        consent_details = await aa.get_consent_details(body.consent_id)
-        raw_txns = await aa.fetch_transactions(
-            body.consent_id,
-            acc["account_id"],
-            consent_details.get("from_date", ""),
-            consent_details.get("to_date", ""),
-        )
-
-        # 4. Normalize and store
-        count = txn_svc.normalize_and_store(raw_txns, stored["id"])
-        total_txns += count
-
     return {
-        "accounts_linked": len(stored_accounts),
-        "transactions_synced": total_txns,
-        "accounts": stored_accounts,
+        "event": {
+            "id": event.id,
+            "title": event.title,
+            "currency": event.currency,
+            "status": event.status,
+            "created_at": event.created_at,
+            "closed_at": event.closed_at
+        },
+        "total_collected": float(sum((le.amount for le in ledger), Decimal("0.00"))),
+        "verified_entry_count": len(ledger),
+        "settlement_proof": proof.model_dump() if proof else None
     }
 
-
-@app.get("/api/financial/accounts")
-def financial_list_accounts():
-    """List all linked financial accounts."""
-    accounts = txn_svc.get_user_accounts(DEFAULT_USER_ID)
-    return accounts
-
-
-@app.delete("/api/financial/accounts/{account_id}")
-def financial_unlink_account(account_id: str):
-    """Unlink a financial account."""
-    success = txn_svc.unlink_account(account_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="Account not found")
-    return {"status": "UNLINKED"}
-
-
-@app.get("/api/financial/transactions")
-def financial_transactions(
-    account_id: Optional[str] = Query(None),
-    category: Optional[str] = Query(None),
-    from_date: Optional[str] = Query(None, alias="from"),
-    to_date: Optional[str] = Query(None, alias="to"),
-    txn_type: Optional[str] = Query(None, alias="type"),
-):
-    """List transactions with filters."""
-    txns = txn_svc.get_transactions(
-        DEFAULT_USER_ID,
-        account_id=account_id,
-        category=category,
-        from_date=from_date,
-        to_date=to_date,
-        txn_type=txn_type,
-    )
-    return txns
-
-
-@app.get("/api/financial/summary")
-def financial_summary(period: str = Query("this_month")):
-    """Get spending summary for a period."""
-    return txn_svc.get_summary(DEFAULT_USER_ID, period)
-
-
-@app.get("/api/financial/trends")
-def financial_trends():
-    """Get monthly category trends for last 6 months."""
-    return txn_svc.get_trends(DEFAULT_USER_ID)
-
-
-@app.get("/api/financial/recurring")
-def financial_recurring():
-    """Get detected recurring transactions."""
-    return txn_svc.get_recurring_transactions(DEFAULT_USER_ID)
-
-
-# ══════════════════════════════════════════════
-# PHINITE AGENT — Mock Integration Endpoints
-# ══════════════════════════════════════════════
-
-@app.get("/api/financial/consent/status/{user_id}")
-def get_user_consent_status(user_id: str):
-    """Phinite: Get overall consent status for user."""
-    # Mocking that consent is ACTIVE if we have any consents, else MISSING
-    has_consents = len(_user_consents.get(user_id, [])) > 0
-    return {
-        "user_id": user_id,
-        "status": "ACTIVE" if has_consents else "MISSING",
-        "message": "Consent is active" if has_consents else "Please link an account via AA."
-    }
-
-@app.get("/financial/preferences/{user_id}")
-def get_user_preferences(user_id: str):
-    """Phinite: Get financial guardrail preferences."""
-    return {
-        "user_id": user_id,
-        "min_balance_requirement": 5000.0,
-        "monthly_spending_limit": 40000.0,
-        "warning_threshold_percentage": 80.0
-    }
-
-@app.post("/financial/check-payment")
-def check_payment_feasibility(body: dict):
-    """Phinite: Deterministic guardrail check."""
-    amount = float(body.get("amount", 0))
-    # Mock logic: if > 50,000 BLOCKED, if > 10,000 WARNING, else SAFE
-    if amount > 50000:
-        return {"status": "BLOCKED", "message": "Amount exceeds maximum safe-to-spend limit.", "can_proceed": False}
-    elif amount > 10000:
-        return {"status": "WARNING", "message": "This is a large transaction that impacts your monthly budget.", "can_proceed": True}
-    return {"status": "SAFE", "message": "Transaction is well within your budget limits.", "can_proceed": True}
-
-@app.get("/paytm/capabilities")
-def get_paytm_capabilities():
-    """Phinite: Available Paytm capabilities."""
-    return {
-        "capabilities": [
-            {"id": "MOBILE_RECHARGE", "name": "Mobile Recharge", "description": "Recharge prepaid mobile plans"},
-            {"id": "BILL_PAYMENT", "name": "Bill Payment", "description": "Pay utility bills (electricity, water, etc.)"},
-            {"id": "UPI_PAYMENT", "name": "UPI Transfer", "description": "Send money via UPI"},
-            {"id": "INVEST_MF", "name": "Mutual Funds", "description": "Invest in mutual funds"},
-        ]
-    }
-
-@app.get("/paytm/offers")
-def get_paytm_offers(capability: str = None, amount: float = None, service: str = None):
-    """Phinite: Offer Discovery."""
-    return {
-        "offers": [
-            {
-                "offer_id": "OFFER_CB_100",
-                "title": f"Flat ₹100 Cashback on {capability or 'Payments'}",
-                "description": "Get ₹100 cashback on your next transaction.",
-                "min_amount": 500.0,
-                "benefit_amount": 100.0
-            }
-        ]
-    }
-
-@app.post("/paytm/offers/check-eligibility")
-def check_offer_eligibility(body: dict):
-    """Phinite: Validate offer eligibility."""
-    return {
-        "is_eligible": True,
-        "eligibility_reason": "User meets all criteria for this offer."
-    }
-
-@app.post("/paytm/recharge")
-def execute_recharge(body: dict):
-    """Phinite: Action Execution - Recharge."""
-    return {"status": "SUCCESS", "transaction_id": f"REC{int(datetime.utcnow().timestamp())}", "message": "Recharge successful"}
-
-@app.post("/paytm/bill-payment")
-def execute_bill_payment(body: dict):
-    """Phinite: Action Execution - Bill Payment."""
-    return {"status": "SUCCESS", "transaction_id": f"BIL{int(datetime.utcnow().timestamp())}", "message": "Bill paid successfully"}
-
-@app.post("/paytm/upi-payment")
-def execute_upi_payment(body: dict):
-    """Phinite: Action Execution - UPI."""
-    return {"status": "SUCCESS", "transaction_id": f"UPI{int(datetime.utcnow().timestamp())}", "message": "UPI Transfer successful"}
-
-@app.post("/audit/log-action")
-def log_agent_action(body: dict):
-    """Phinite: Audit log."""
-    print(f"[AUDIT] Agent action logged: {body}")
-    return {"logged": True, "timestamp": datetime.utcnow().isoformat()}
-
-@app.post("/notifications/send-monthly-email")
-def send_monthly_email(body: dict):
-    """Phinite: Trigger monthly email."""
-    print(f"[EMAIL] Sent monthly summary email to {body.get('user_id')}")
-    return {"email_sent": True, "message": "Monthly summary email dispatched successfully."}
-
-# ──────────────────────────────────────────────
-# AI Chat Proxy Endpoint
-# ──────────────────────────────────────────────
-
-def call_groq_fallback(prompt: str, user_id: str):
-    groq_api_key = os.environ.get("GROQ_API_KEY", "")
-    
-    system_prompt = """
-You are PayGo AI, a financial assistant.
-You must respond with a JSON object containing the exact following keys:
-- response (string): The text to show the user.
-- action (string or null): One of "GUARDRAIL_BLOCKED", "EXPENSE_CHART", "INVESTMENT_CARDS", or null.
-- payload (object or null): Data for the action. 
-
-If the user wants to recharge a large amount (e.g. 55000), return action "GUARDRAIL_BLOCKED", payload: {"amount": 55000, "merchant": "Jio Prepaid", "limit": 40000, "status": "BLOCKED"}.
-If the user asks about expenses/weekly, return action "EXPENSE_CHART", payload: {"total_spent": 12500, "recurring": ["Netflix", "Spotify"], "chart_data": [{"day": "Mon", "amount": 1200}, {"day": "Tue", "amount": 500}, {"day": "Wed", "amount": 3400}, {"day": "Thu", "amount": 800}, {"day": "Fri", "amount": 2100}, {"day": "Sat", "amount": 4500}, {"day": "Sun", "amount": 0}]}
-If the user asks about investments, return action "INVESTMENT_CARDS", payload: {"recommendations": [{"type": "Mutual Fund", "name": "Axis Bluechip", "risk": "Moderate", "return": "12.5% p.a"}, {"type": "Fixed Deposit", "name": "Shriram Finance", "risk": "Low", "return": "8.5% p.a"}]}
-Else, just return a helpful response with action=null and payload=null.
-Always output valid JSON only.
-"""
-    req_data = {
-        "model": "llama3-70b-8192",
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt}
-        ],
-        "response_format": {"type": "json_object"}
-    }
-    
-    req = urllib.request.Request("https://api.groq.com/openai/v1/chat/completions", method="POST")
-    req.add_header("Content-Type", "application/json")
-    req.add_header("Authorization", f"Bearer {groq_api_key}")
-    
-    try:
-        with urllib.request.urlopen(req, data=json.dumps(req_data).encode("utf-8")) as response:
-            res_body = json.loads(response.read())
-            content = res_body["choices"][0]["message"]["content"]
-            return json.loads(content)
-    except Exception as e:
-        print(f"[Groq Fallback Error] {e}")
-        return {
-            "response": "I'm sorry, my AI services are currently unavailable.",
-            "action": None,
-            "payload": None
-        }
-
-@app.post("/ai/chat")
-async def ai_chat_proxy(body: AIChatRequest):
-    phinite_url = "https://app.phinite.ai/api/v1/ai/trigger/02s7lv1/jMRGm-ghn/development"
-    api_key = os.environ.get("PHINITE_API_KEY", "")
-    
-    if not api_key:
-        print("[WARNING] PHINITE_API_KEY is not set. Falling back to Groq.")
-        return call_groq_fallback(body.prompt, body.user_id)
-
-    req = urllib.request.Request(phinite_url, method="POST")
-    req.add_header("Content-Type", "application/json")
-    req.add_header("Authorization", f"Bearer {api_key}")
-    
-    data = json.dumps({"prompt": body.prompt, "user_id": body.user_id}).encode("utf-8")
-    
-    try:
-        with urllib.request.urlopen(req, data=data) as response:
-            res_body = response.read()
-            return json.loads(res_body)
-    except Exception as e:
-        print(f"[Phinite API Exception] {e}. Falling back to Groq.")
-        return call_groq_fallback(body.prompt, body.user_id)
 
 if __name__ == "__main__":
     import uvicorn

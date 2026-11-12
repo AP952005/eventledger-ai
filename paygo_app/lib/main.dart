@@ -1,4 +1,5 @@
-/// PayGo — Main App Entry Point
+/// EventTreasury AI — Main App Entry Point
+/// Powered by PayPal (PayPal AI Hackathon Edition)
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -19,29 +20,26 @@ void main() {
     ),
   );
 
-  // Lock to portrait orientation
-  SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
-  ]);
-
-  runApp(const ProviderScope(child: PayGoApp()));
+  runApp(const ProviderScope(child: EventTreasuryApp()));
 }
 
-class PayGoApp extends ConsumerWidget {
-  const PayGoApp({super.key});
+class EventTreasuryApp extends ConsumerWidget {
+  const EventTreasuryApp({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final themeMode = ref.watch(themeProvider);
 
     return MaterialApp.router(
-      title: 'PayGo',
+      title: 'EventTreasury AI — Powered by PayPal',
       debugShowCheckedModeBanner: false,
-      theme: PayGoTheme.lightTheme,
-      darkTheme: PayGoTheme.darkTheme,
+      theme: EventTreasuryTheme.lightTheme,
+      darkTheme: EventTreasuryTheme.darkTheme,
       themeMode: themeMode,
       routerConfig: AppRoutes.router,
     );
   }
 }
+
+// Backward compatibility alias
+typedef PayGoApp = EventTreasuryApp;

@@ -16,7 +16,16 @@ class ConnectAccountScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Connect Account'),
-        leading: IconButton(icon: const Icon(Icons.arrow_back_rounded), onPressed: () => context.pop()),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/home');
+            }
+          },
+        ),
       ),
       body: Padding(
         padding: const EdgeInsets.all(24),

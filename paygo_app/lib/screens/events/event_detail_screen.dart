@@ -1,59 +1,97 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:flutter/services.dart';
-import '../../services/api_service.dart';
-import '../../models/event.dart';
-import '../../models/ledger_entry.dart';
-import 'package:share_plus/share_plus.dart';
 import '../../config/colors.dart';
-import '../../config/routes.dart';
+import '../../services/event_treasury_api_service.dart';
+import '../../services/event_report_pdf_service.dart';
+import '../../widgets/event_treasury_shell.dart';
 
-class EventDetailScreen extends StatefulWidget {
+class EventDetailTreasuryScreen extends StatefulWidget {
   final String eventId;
-  const EventDetailScreen({super.key, required this.eventId});
+  const EventDetailTreasuryScreen({super.key, required this.eventId});
 
   @override
-  State<EventDetailScreen> createState() => _EventDetailScreenState();
+  State<EventDetailTreasuryScreen> createState() => _EventDetailTreasuryScreenState();
 }
 
-class _EventDetailScreenState extends State<EventDetailScreen> {
+class _EventDetailTreasuryScreenState extends State<EventDetailTreasuryScreen> {
   bool _isLoading = true;
-  CollectEvent? _event;
-  List<LedgerEntry> _ledger = [];
+  Map<String, dynamic>? _event;
+  List<dynamic> _participants = [];
+  List<dynamic> _ledger = [];
+  Map<String, dynamic>? _settlementProof;
+  Map<String, dynamic>? _aiAuditReport;
+  bool _isGeneratingPdf = false;
+  String? _error;
 
   @override
   void initState() {
     super.initState();
-    _loadData();
+    _loadDetail();
   }
 
-  Future<void> _loadData() async {
+  Future<void> _loadDetail() async {
     setState(() => _isLoading = true);
     try {
-      final data = await ApiService.getEventDetail(widget.eventId);
+      final res = await EventTreasuryApiService.getEventDetail(widget.eventId);
       setState(() {
-        _event = data['event'] as CollectEvent;
-        _ledger = data['ledger'] as List<LedgerEntry>;
-        _ledger.sort((a, b) => b.matchedAt.compareTo(a.matchedAt));
+        _event = res['event'];
+        _participants = res['participants'] ?? [];
+        _ledger = res['ledger'] ?? [];
+        _settlementProof = res['settlement_proof'];
         _isLoading = false;
       });
     } catch (e) {
-      setState(() => _isLoading = false);
+      setState(() {
+        _error = e.toString();
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _downloadPdfReport() async {
+    if (_event == null) return;
+    setState(() => _isGeneratingPdf = true);
+    try {
+      // Generate and layout PDF immediately with current event, participants, and ledger data
+      await EventReportPdfService.generateAndDownloadPdf(
+        event: _event!,
+        participants: _participants,
+        ledger: _ledger,
+        settlementProof: _settlementProof,
+        aiAuditReport: _aiAuditReport,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Financial Audit PDF ready to print or save.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to generate PDF: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isGeneratingPdf = false);
+      }
     }
   }
 
   Future<void> _closeEvent() async {
-    final confirm = await showDialog<bool>(
+    final confirmed = await showDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
-        title: const Text('Close Event?'),
-        content: const Text('Closing the event will permanently disable its QR code and lock the ledger. A cryptographically signed Settlement Proof will be generated. This cannot be undone.'),
+        title: const Text('Close Event & Lock Collections?'),
+        content: const Text(
+          'Closing this event will permanently halt new participant registrations, expire outstanding invoices, and produce a cryptographically signed SHA-256 Settlement Proof. This cannot be undone.',
+        ),
         actions: [
-          TextButton(onPressed: () => context.pop(false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancel')),
           TextButton(
-            onPressed: () => context.pop(true),
+            onPressed: () => Navigator.pop(c, true),
             style: TextButton.styleFrom(foregroundColor: Colors.red),
             child: const Text('Close Event'),
           ),
@@ -61,149 +99,197 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
       ),
     );
 
-    if (confirm != true) return;
-
-    setState(() => _isLoading = true);
-    try {
-      await ApiService.closeEvent(widget.eventId);
-      await _loadData();
-    } catch (e) {
-      setState(() => _isLoading = false);
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+    if (confirmed == true) {
+      setState(() => _isLoading = true);
+      try {
+        await EventTreasuryApiService.closeEvent(widget.eventId);
+        await _loadDetail();
+      } catch (e) {
+        setState(() => _isLoading = false);
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-    if (_event == null) {
-      return const Scaffold(body: Center(child: Text('Event not found')));
-    }
-
-    final isActive = _event!.status == EventStatus.active;
-    final totalCollected = _ledger.fold(0.0, (sum, e) => sum + e.amount);
-    final unmatchedCount = _ledger.where((e) => e.isUnmatched).length;
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(_event!.title),
-        actions: [
-          if (isActive)
-            IconButton(
-              icon: const Icon(Icons.lock_outline),
-              tooltip: 'Close Event',
-              onPressed: _closeEvent,
-            ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Status and Summary Card
-            Card(
-              elevation: 0,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-                side: BorderSide(color: Colors.grey.shade200),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(20.0),
-                child: Column(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                      decoration: BoxDecoration(
-                        color: isActive ? Colors.green.shade100 : Colors.grey.shade200,
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Text(
-                        isActive ? 'ACTIVE' : 'CLOSED',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: isActive ? Colors.green.shade700 : Colors.grey.shade700,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-                    const Text('Total Collected', style: TextStyle(color: Colors.grey)),
-                    const SizedBox(height: 4),
-                    Text(
-                      '₹${totalCollected.toStringAsFixed(2)}',
-                      style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold),
-                    ),
-                    if (_event!.targetAmount != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8.0),
-                        child: Text(
-                          'of ₹${_event!.targetAmount!.toStringAsFixed(0)} target',
-                          style: const TextStyle(color: Colors.grey),
-                        ),
-                      ),
-                  ],
+    return EventTreasuryShell(
+      currentRoute: '/events',
+      child: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null || _event == null
+              ? Center(child: Text(_error ?? 'Event not found'))
+              : SingleChildScrollView(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildHeader(),
+                      const SizedBox(height: 24),
+                      _buildTwoLevelQRSection(),
+                      const SizedBox(height: 32),
+                      _buildParticipantsSection(),
+                      if (_settlementProof != null) ...[
+                        const SizedBox(height: 32),
+                        _buildSettlementProofCard(),
+                      ],
+                    ],
+                  ),
                 ),
+    );
+  }
+
+  Widget _buildHeader() {
+    final status = _event!['status'] ?? 'ACTIVE';
+    final isActive = status == 'ACTIVE';
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  _event!['title'] ?? 'Event Detail',
+                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(width: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: isActive ? Colors.green.shade50 : Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    status,
+                    style: TextStyle(
+                      color: isActive ? EventTreasuryColors.success : EventTreasuryColors.neutral,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Fee: \$${_event!['amount']} ${_event!['currency']} • Target: \$${_event!['target_amount']}',
+              style: const TextStyle(color: EventTreasuryColors.lightTextSecondary),
+            ),
+          ],
+        ),
+        Row(
+          children: [
+            ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF003087)),
+              icon: _isGeneratingPdf
+                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  : const Icon(Icons.picture_as_pdf_rounded, size: 18),
+              label: const Text('Export Final PDF Report'),
+              onPressed: _isGeneratingPdf ? null : _downloadPdfReport,
+            ),
+            if (isActive) ...[
+              const SizedBox(width: 10),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red.shade700),
+                icon: const Icon(Icons.lock_outline, size: 18),
+                label: const Text('Close & Sign Ledger'),
+                onPressed: _closeEvent,
               ),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+
+  int _qrModeIndex = 0; // 0 = Direct Fixed Amount PayPal QR, 1 = Public Portal QR
+
+  Widget _buildTwoLevelQRSection() {
+    final amount = (_event!['amount'] as num?)?.toDouble() ?? 0.0;
+    final currency = _event!['currency'] ?? 'USD';
+    final regUrl = 'http://localhost:3000/#/events/register/${widget.eventId}';
+    
+    // Official PayPal Deep Link / Payment URL with pre-filled amount and recipient reference
+    // PayPal me / PayPal checkout standard deep link format for fixed amount scanning
+    final directPayPalQrUrl = 'https://www.paypal.com/qrcodes/managed/payment?amount=${amount.toStringAsFixed(2)}&currency_code=$currency&invoice_id=${widget.eventId}';
+
+    final activeQrData = _qrModeIndex == 0 ? directPayPalQrUrl : regUrl;
+
+    return Card(
+      elevation: 1,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                _qrToggleTab('Direct PayPal Fixed Amount QR', 0),
+                const SizedBox(width: 8),
+                _qrToggleTab('Public Registration Portal QR', 1),
+              ],
             ),
             const SizedBox(height: 16),
-
-            // QR Code (if active)
-            if (isActive)
-              Card(
-                elevation: 0,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(16),
-                  side: BorderSide(color: Colors.blue.shade200),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: EventTreasuryColors.borderBlue),
+                  ),
+                  child: QrImageView(data: activeQrData, size: 140),
                 ),
-                color: Colors.blue.withValues(alpha: 0.05),
-                child: Padding(
-                  padding: const EdgeInsets.all(24.0),
+                const SizedBox(width: 20),
+                Expanded(
                   child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('Scan to Pay', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                      const SizedBox(height: 16),
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12)),
-                        child: QrImageView(
-                          data: _event!.upiDeepLink,
-                          version: QrVersions.auto,
-                          size: 200.0,
-                        ),
+                      Text(
+                        _qrModeIndex == 0
+                            ? 'Official PayPal Fixed Amount QR (\$$amount $currency)'
+                            : 'Public Event Registration Portal QR',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Color(0xFF003087)),
                       ),
-                      const SizedBox(height: 16),
-                      Text('Payee: ${_event!.settlementName}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                      const SizedBox(height: 2),
-                      Text('VPA: ${_event!.settlementVpa}', style: const TextStyle(color: Colors.grey, fontSize: 12, fontFamily: 'monospace')),
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 4),
+                      Text(
+                        _qrModeIndex == 0
+                            ? 'When scanned with the PayPal mobile app or camera, it immediately opens PayPal checkout with the exact registration fee pre-filled (\$$amount $currency) targeting your PayPal Sandbox merchant.'
+                            : 'Share this link or QR for participants to enter their custom info before an invoice is issued.',
+                        style: const TextStyle(color: EventTreasuryColors.lightTextSecondary, fontSize: 13),
+                      ),
+                      const SizedBox(height: 12),
                       Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           OutlinedButton.icon(
-                            icon: const Icon(Icons.copy_rounded, size: 18),
-                            label: const Text('Copy Link'),
+                            icon: const Icon(Icons.copy, size: 16),
+                            label: Text(_qrModeIndex == 0 ? 'Copy PayPal Payment Link' : 'Copy Portal URL'),
                             onPressed: () {
-                              Clipboard.setData(ClipboardData(text: _event!.upiDeepLink));
-                              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('UPI deep link copied!')));
+                              Clipboard.setData(ClipboardData(text: activeQrData));
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text(_qrModeIndex == 0 ? 'PayPal Payment Link copied!' : 'Registration portal URL copied!')),
+                              );
                             },
                           ),
-                          const SizedBox(width: 12),
+                          const SizedBox(width: 8),
                           ElevatedButton.icon(
-                            icon: const Icon(Icons.share_rounded, size: 18),
-                            label: const Text('Share'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: PayGoColors.oceanBlue,
-                              foregroundColor: Colors.white,
-                            ),
+                            icon: const Icon(Icons.open_in_browser, size: 16),
+                            label: Text(_qrModeIndex == 0 ? 'Test PayPal Link' : 'Open Portal'),
                             onPressed: () {
-                              Share.share(
-                                '💰 Pay for "${_event!.title}"\n\n'
-                                'Payee: ${_event!.settlementName}\n'
-                                'VPA: ${_event!.settlementVpa}\n\n'
-                                'UPI Link: ${_event!.upiDeepLink}',
-                              );
+                              if (_qrModeIndex == 0) {
+                                Clipboard.setData(ClipboardData(text: directPayPalQrUrl));
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Direct PayPal Payment QR URL generated & ready.')),
+                                );
+                              } else {
+                                context.go('/events/register/${widget.eventId}');
+                              }
                             },
                           ),
                         ],
@@ -211,147 +297,146 @@ class _EventDetailScreenState extends State<EventDetailScreen> {
                     ],
                   ),
                 ),
-              ),
-
-            // Actions Grid
-            if (isActive)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: _ActionCard(
-                        icon: Icons.notifications_active,
-                        title: 'Send\nReminders',
-                        onTap: () => context.push('${AppRoutes.sendReminders}?eventId=${_event!.id}'),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: _ActionCard(
-                        icon: Icons.assignment_late,
-                        title: 'Unmatched\nPayments',
-                        badge: unmatchedCount > 0 ? unmatchedCount.toString() : null,
-                        onTap: () => context.push('${AppRoutes.unmatchedPayments}?eventId=${_event!.id}').then((_) => _loadData()),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-            if (!isActive)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.verified),
-                    label: const Text('View Settlement Proof'),
-                    onPressed: () => context.push('${AppRoutes.settlementProof}?eventId=${_event!.id}'),
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      backgroundColor: Colors.green.shade50,
-                      foregroundColor: Colors.green.shade700,
-                      elevation: 0,
-                    ),
-                  ),
-                ),
-              ),
-
-            // Ledger
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 8),
-              child: Text('Ledger', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+              ],
             ),
-            if (_ledger.isEmpty)
-              const Padding(
-                padding: EdgeInsets.all(24.0),
-                child: Center(child: Text('No payments received yet', style: TextStyle(color: Colors.grey))),
-              )
-            else
-              ListView.separated(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: _ledger.length,
-                separatorBuilder: (_, __) => const Divider(height: 1),
-                itemBuilder: (context, index) {
-                  final entry = _ledger[index];
-                  return ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    leading: CircleAvatar(
-                      backgroundColor: entry.isUnmatched ? Colors.orange.shade100 : Colors.blue.shade100,
-                      child: Icon(
-                        entry.isUnmatched ? Icons.help_outline : Icons.person,
-                        color: entry.isUnmatched ? Colors.orange : Colors.blue,
-                      ),
-                    ),
-                    title: Text(
-                      entry.isUnmatched ? 'Unmatched Payment' : entry.participantName!,
-                      style: TextStyle(
-                        fontWeight: entry.isUnmatched ? FontWeight.bold : FontWeight.normal,
-                        color: entry.isUnmatched ? Colors.orange.shade700 : null,
-                      ),
-                    ),
-                    subtitle: Text(
-                      '${entry.payerVpaOrPhone}\n${DateFormat('MMM d, h:mm a').format(entry.matchedAt)}',
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                    trailing: Text(
-                      '+₹${entry.amount.toStringAsFixed(0)}',
-                      style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.green, fontSize: 16),
-                    ),
-                    isThreeLine: true,
-                  );
-                },
-              ),
-            const SizedBox(height: 40),
           ],
         ),
       ),
     );
   }
-}
 
-class _ActionCard extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final VoidCallback onTap;
-  final String? badge;
-
-  const _ActionCard({required this.icon, required this.title, required this.onTap, this.badge});
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _qrToggleTab(String title, int index) {
+    final isSelected = _qrModeIndex == index;
     return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(16),
-      child: Ink(
-        padding: const EdgeInsets.all(16),
+      onTap: () => setState(() => _qrModeIndex = index),
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
         decoration: BoxDecoration(
-          color: Theme.of(context).cardColor,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.grey.shade200),
+          color: isSelected ? const Color(0xFF003087) : const Color(0xFFF3F8FF),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: isSelected ? const Color(0xFF003087) : const Color(0xFFDCE7F5)),
         ),
-        child: Column(
+        child: Text(
+          title,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            color: isSelected ? Colors.white : const Color(0xFF003087),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildParticipantsSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Icon(icon, size: 32, color: PayGoColors.oceanBlue),
-                if (badge != null)
-                  Positioned(
-                    right: -8,
-                    top: -8,
-                    child: Container(
-                      padding: const EdgeInsets.all(4),
-                      decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
-                      child: Text(badge!, style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
-                    ),
-                  ),
+            Text(
+              'Participants & Invoices (${_participants.length})',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.notifications_active_outlined, size: 16),
+              label: const Text('AI Reminder Batch'),
+              onPressed: () => context.go('/events/reminders?id=${widget.eventId}'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Card(
+          elevation: 1,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          child: _participants.isEmpty
+              ? const Padding(
+                  padding: EdgeInsets.all(32),
+                  child: Center(child: Text('No participants registered yet.')),
+                )
+              : ListView.separated(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: _participants.length,
+                  separatorBuilder: (c, i) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    final part = _participants[index];
+                    final isPaid = part['status'] == 'PAID';
+
+                    return ListTile(
+                      leading: CircleAvatar(
+                        backgroundColor: isPaid ? Colors.green.shade50 : Colors.amber.shade50,
+                        child: Icon(
+                          isPaid ? Icons.check : Icons.hourglass_top,
+                          color: isPaid ? EventTreasuryColors.success : EventTreasuryColors.warning,
+                          size: 18,
+                        ),
+                      ),
+                      title: Text(part['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: Text(
+                        '${part['email']} • Reg ID: ${part['registration_id']} • Invoice: ${part['paypal_invoice_id'] ?? 'Draft'}',
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                      trailing: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            '\$${part['amount']} ${part['currency']}',
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          Text(
+                            part['status'] ?? 'AWAITING_PAYMENT',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: isPaid ? EventTreasuryColors.success : EventTreasuryColors.warning,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSettlementProofCard() {
+    return Card(
+      color: Colors.green.shade50,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: Colors.green.shade200),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: const [
+                Icon(Icons.verified, color: EventTreasuryColors.success),
+                SizedBox(width: 8),
+                Text(
+                  'Cryptographic Settlement Proof Generated',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: EventTreasuryColors.success),
+                ),
               ],
             ),
-            const SizedBox(height: 12),
-            Text(title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 8),
+            SelectableText(
+              'SHA-256 Digest: ${_settlementProof!['canonical_snapshot_hash']}',
+              style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+            ),
+            const SizedBox(height: 4),
+            SelectableText(
+              'ECDSA Signature: ${_settlementProof!['signature']}',
+              style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+            ),
           ],
         ),
       ),

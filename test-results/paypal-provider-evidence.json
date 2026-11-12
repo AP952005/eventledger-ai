@@ -1,0 +1,10 @@
+{
+  "oauth_token_acquired": true,
+  "token_length": 97,
+  "invoice_created": true,
+  "invoice_id": "INV2-H74E-BVRL-78AN-CX8C",
+  "status": "SENT",
+  "qr_base64_len": 700,
+  "fetched_status": "UNPAID",
+  "amount_verified": "50.00"
+}

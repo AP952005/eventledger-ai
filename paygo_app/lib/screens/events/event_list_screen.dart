@@ -1,21 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:intl/intl.dart';
-import '../../services/api_service.dart';
-import '../../models/event.dart';
 import '../../config/colors.dart';
 import '../../config/routes.dart';
+import '../../services/event_treasury_api_service.dart';
+import '../../widgets/event_treasury_shell.dart';
 
-class EventListScreen extends StatefulWidget {
-  const EventListScreen({super.key});
+class EventTreasuryListScreen extends StatefulWidget {
+  const EventTreasuryListScreen({super.key});
 
   @override
-  State<EventListScreen> createState() => _EventListScreenState();
+  State<EventTreasuryListScreen> createState() => _EventTreasuryListScreenState();
 }
 
-class _EventListScreenState extends State<EventListScreen> {
+class _EventTreasuryListScreenState extends State<EventTreasuryListScreen> {
   bool _isLoading = true;
-  List<CollectEvent> _events = [];
+  List<dynamic> _events = [];
 
   @override
   void initState() {
@@ -25,128 +24,131 @@ class _EventListScreenState extends State<EventListScreen> {
 
   Future<void> _loadEvents() async {
     setState(() => _isLoading = true);
-    try {
-      final events = await ApiService.getMyEvents();
-      // Sort by creation date descending
-      events.sort((a, b) => b.createdAt.compareTo(a.createdAt));
-      setState(() {
-        _events = events;
-        _isLoading = false;
-      });
-    } catch (e) {
-      setState(() => _isLoading = false);
-    }
-  }
-
-  void _onCreateTap() {
-    context.push(AppRoutes.createEvent);
+    final list = await EventTreasuryApiService.listEvents();
+    setState(() {
+      _events = list;
+      _isLoading = false;
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Event Pay'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.help_outline),
-            onPressed: () {
-              showDialog(
-                context: context,
-                builder: (c) => AlertDialog(
-                  title: const Text('What is Event Pay?'),
-                  content: const Text('Create a dedicated QR code for group collections (trips, farewells, etc.). Money goes directly to your bank account via UPI. payGO does not hold your funds.'),
-                  actions: [TextButton(onPressed: () => context.pop(), child: const Text('Got it'))],
-                ),
-              );
-            },
-          ),
-        ],
-      ),
-      body: _isLoading
+    return EventTreasuryShell(
+      currentRoute: AppRoutes.eventList,
+      child: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : _events.isEmpty
-              ? _buildEmptyState()
-              : _buildList(),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _onCreateTap,
-        icon: const Icon(Icons.add),
-        label: const Text('Create Event'),
-        backgroundColor: PayGoColors.oceanBlue,
-        foregroundColor: Colors.white,
-      ),
-    );
-  }
-
-  Widget _buildEmptyState() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.qr_code_scanner, size: 80, color: Colors.grey.shade400),
-            const SizedBox(height: 24),
-            const Text(
-              'No events yet',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              'Create a dedicated QR code to collect money for trips, parties, and group gifts.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildList() {
-    return RefreshIndicator(
-      onRefresh: _loadEvents,
-      child: ListView.separated(
-        padding: const EdgeInsets.only(bottom: 80, top: 16),
-        itemCount: _events.length,
-        separatorBuilder: (_, __) => const Divider(height: 1),
-        itemBuilder: (context, index) {
-          final event = _events[index];
-          final isActive = event.status == EventStatus.active;
-          return ListTile(
-            contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            title: Text(event.title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
-            subtitle: Padding(
-              padding: const EdgeInsets.only(top: 8.0),
-              child: Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: isActive ? Colors.green.shade100 : Colors.grey.shade200,
-                      borderRadius: BorderRadius.circular(4),
+          : RefreshIndicator(
+              onRefresh: _loadEvents,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Events & Collections',
+                          style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
+                        ),
+                        ElevatedButton.icon(
+                          icon: const Icon(Icons.add, size: 18),
+                          label: const Text('New Event'),
+                          onPressed: () => context.go(AppRoutes.createEvent),
+                        ),
+                      ],
                     ),
-                    child: Text(
-                      isActive ? 'ACTIVE' : 'CLOSED',
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                        color: isActive ? Colors.green.shade700 : Colors.grey.shade700,
+                    const SizedBox(height: 20),
+                    if (_events.isEmpty)
+                      const Center(child: Text('No events created yet.'))
+                    else
+                      ListView.separated(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: _events.length,
+                        separatorBuilder: (c, i) => const SizedBox(height: 16),
+                        itemBuilder: (context, index) {
+                          final ev = _events[index];
+                          final collected = (ev['collected_amount'] as num?)?.toDouble() ?? 0.0;
+                          final target = (ev['target_amount'] as num?)?.toDouble() ?? 1.0;
+                          final progress = (target > 0) ? (collected / target).clamp(0.0, 1.0) : 1.0;
+                          final status = ev['status'] ?? 'ACTIVE';
+
+                          return Card(
+                            elevation: 1,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            child: Padding(
+                              padding: const EdgeInsets.all(20),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: status == 'ACTIVE' ? Colors.green.shade50 : Colors.grey.shade100,
+                                          borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: Text(
+                                          status,
+                                          style: TextStyle(
+                                            color: status == 'ACTIVE' ? EventTreasuryColors.success : EventTreasuryColors.neutral,
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 11,
+                                          ),
+                                        ),
+                                      ),
+                                      const Spacer(),
+                                      Text(
+                                        '\$$collected / \$$target ${ev['currency'] ?? 'USD'}',
+                                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Text(
+                                    ev['title'] ?? 'Event',
+                                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    ev['description'] ?? '',
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(color: EventTreasuryColors.lightTextSecondary),
+                                  ),
+                                  const SizedBox(height: 16),
+                                  LinearProgressIndicator(value: progress, color: EventTreasuryColors.paypalBlue, backgroundColor: Colors.grey.shade200),
+                                  const SizedBox(height: 16),
+                                  Row(
+                                    children: [
+                                      Text(
+                                        '${ev['paid_count'] ?? 0} paid • ${ev['registered_count'] ?? 0} total registered',
+                                        style: const TextStyle(fontSize: 12, color: EventTreasuryColors.lightTextSecondary),
+                                      ),
+                                      const Spacer(),
+                                      OutlinedButton(
+                                        onPressed: () => context.go('/events/register/${ev['id']}'),
+                                        child: const Text('Public Registration QR'),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      ElevatedButton(
+                                        onPressed: () => context.go('/events/detail?id=${ev['id']}'),
+                                        child: const Text('Manage Event'),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text('Target: ₹${event.targetAmount?.toStringAsFixed(0) ?? 'N/A'}', style: const TextStyle(fontSize: 12)),
-                ],
+                  ],
+                ),
               ),
             ),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: () {
-              context.push('${AppRoutes.eventDetail}?eventId=${event.id}').then((_) => _loadEvents());
-            },
-          );
-        },
-      ),
     );
   }
 }

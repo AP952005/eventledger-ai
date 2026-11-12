@@ -1,0 +1,11 @@
+{
+  "provider": "CASHFREE",
+  "environment": "sandbox",
+  "client_id_configured": false,
+  "client_secret_configured": false,
+  "base_url": "https://sandbox.cashfree.com/pg",
+  "api_version": "2023-08-01",
+  "status": "BLOCKED_MISSING_LIVE_SANDBOX_APP_CREDENTIALS",
+  "reason": "CASHFREE_CLIENT_ID and CASHFREE_CLIENT_SECRET in .env are placeholder/mock values (TEST_CF_APP_001). Real merchant credentials from Cashfree Merchant Dashboard (https://merchant.cashfree.com) required for live order token creation against api.cashfree.com/sandbox.cashfree.com.",
+  "local_simulation_status": "PASS (Dynamic Order & UPI Intent Engine verified via Newman suite)"
+}

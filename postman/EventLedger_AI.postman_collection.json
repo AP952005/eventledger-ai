@@ -1,0 +1,466 @@
+{
+  "info": {
+    "_postman_id": "b3e0c7a5-298e-4a6f-b258-eventledger-collection",
+    "name": "EventLedger AI — Multi-Provider API Test Suite",
+    "description": "Comprehensive Postman test collection for EventLedger AI: Multi-Provider Payments (PayPal + Cashfree), Eligibility Routing, Webhooks, Reconciliation, and Financial Hub.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "01. Dashboard & Events",
+      "item": [
+        {
+          "name": "Get Dashboard Overview",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Response contains metrics', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('metrics');",
+                  "    pm.expect(json.metrics).to.have.property('total_events');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Organization-Id", "value": "{{org_id}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/dashboard/overview",
+              "host": ["{{base_url}}"],
+              "path": ["api", "dashboard", "overview"]
+            }
+          }
+        },
+        {
+          "name": "List All Events",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Returns event list', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json).to.be.an('array');",
+                  "    if (json.length > 0) {",
+                  "        pm.environment.set('event_id', json[0].id);",
+                  "    }",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Organization-Id", "value": "{{org_id}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/events",
+              "host": ["{{base_url}}"],
+              "path": ["api", "events"]
+            }
+          }
+        },
+        {
+          "name": "Create Event",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Event created with decimal amount', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('id');",
+                  "    pm.environment.set('new_event_id', json.id);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Organization-Id", "value": "{{org_id}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Postman Newman Automated Summit 2026\",\n  \"description\": \"Automated API test event creation\",\n  \"category\": \"Technology\",\n  \"amount\": 35.00,\n  \"target_amount\": 3500.00,\n  \"expected_participants\": 100,\n  \"currency\": \"USD\",\n  \"expiry_days\": 20\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/events",
+              "host": ["{{base_url}}"],
+              "path": ["api", "events"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "02. Registration & Routing",
+      "item": [
+        {
+          "name": "Register Participant",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Participant registered successfully', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('id');",
+                  "    pm.environment.set('participant_id', json.id);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Rohan Sharma\",\n  \"email\": \"rohan.sharma@example.in\",\n  \"phone\": \"9876543210\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/events/{{event_id}}/register",
+              "host": ["{{base_url}}"],
+              "path": ["api", "events", "{{event_id}}", "register"]
+            }
+          }
+        },
+        {
+          "name": "Check Payment Eligibility (Domestic INR -> Cashfree)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('INR routes to CASHFREE', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.recommended_provider).to.eql('CASHFREE');",
+                  "    pm.expect(json.eligible_providers[0].provider).to.eql('CASHFREE');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currency\": \"INR\",\n  \"amount\": 499.00,\n  \"payer_country\": \"IN\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/payments/eligibility",
+              "host": ["{{base_url}}"],
+              "path": ["api", "payments", "eligibility"]
+            }
+          }
+        },
+        {
+          "name": "Check Payment Eligibility (International USD -> PayPal)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('USD routes to PAYPAL', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.recommended_provider).to.eql('PAYPAL');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currency\": \"USD\",\n  \"amount\": 45.00,\n  \"payer_country\": \"US\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/payments/eligibility",
+              "host": ["{{base_url}}"],
+              "path": ["api", "payments", "eligibility"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "03. Common Payment Orders & Sandbox Checkout",
+      "item": [
+        {
+          "name": "Create Multi-Provider Payment Order (Cashfree)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('PaymentOrder created with attempt', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('payment_order');",
+                  "    pm.expect(json).to.have.property('payment_attempt');",
+                  "    pm.environment.set('payment_order_id', json.payment_order.id);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Organization-Id", "value": "{{org_id}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"participant_id\": \"{{participant_id}}\",\n  \"preferred_provider\": \"CASHFREE\",\n  \"payer_country\": \"IN\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/payments/orders/create",
+              "host": ["{{base_url}}"],
+              "path": ["api", "payments", "orders", "create"]
+            }
+          }
+        },
+        {
+          "name": "Get Payment Order Status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Order status matches', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('order');",
+                  "    pm.expect(json).to.have.property('status');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/api/payments/orders/{{payment_order_id}}/status",
+              "host": ["{{base_url}}"],
+              "path": ["api", "payments", "orders", "{{payment_order_id}}", "status"]
+            }
+          }
+        },
+        {
+          "name": "Verify Sandbox Payment Order (Settles Ledger)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Order transitions to SUCCESS', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.order.status).to.eql('SUCCESS');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/api/payments/orders/{{payment_order_id}}/verify-sandbox",
+              "host": ["{{base_url}}"],
+              "path": ["api", "payments", "orders", "{{payment_order_id}}", "verify-sandbox"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "04. Webhooks (Idempotency & Deduplication)",
+      "item": [
+        {
+          "name": "Deliver Cashfree Webhook",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "pm.environment.set('unique_webhook_id', 'wh_evt_' + Date.now());"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Webhook processed successfully', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('SUCCESS');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-webhook-timestamp", "value": "1731412800" },
+              { "key": "x-webhook-signature", "value": "" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event_id\": \"{{unique_webhook_id}}\",\n  \"type\": \"PAYMENT_SUCCESS_WEBHOOK\",\n  \"data\": {\n    \"order\": {\n      \"order_id\": \"{{payment_order_id}}\"\n    },\n    \"payment\": {\n      \"cf_payment_id\": \"98721491\",\n      \"payment_status\": \"SUCCESS\",\n      \"payment_amount\": 45.00,\n      \"payment_currency\": \"USD\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/webhooks/cashfree",
+              "host": ["{{base_url}}"],
+              "path": ["api", "webhooks", "cashfree"]
+            }
+          }
+        },
+        {
+          "name": "Deliver Duplicate Cashfree Webhook (Deduplication Test)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Duplicate webhook is ignored', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('IGNORED_DUPLICATE');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-webhook-timestamp", "value": "1731412800" },
+              { "key": "x-webhook-signature", "value": "" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event_id\": \"{{unique_webhook_id}}\",\n  \"type\": \"PAYMENT_SUCCESS_WEBHOOK\",\n  \"data\": {\n    \"order\": {\n      \"order_id\": \"{{payment_order_id}}\"\n    },\n    \"payment\": {\n      \"cf_payment_id\": \"98721491\",\n      \"payment_status\": \"SUCCESS\",\n      \"payment_amount\": 45.00,\n      \"payment_currency\": \"USD\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/webhooks/cashfree",
+              "host": ["{{base_url}}"],
+              "path": ["api", "webhooks", "cashfree"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "05. Financial Hub & AI Assistant",
+      "item": [
+        {
+          "name": "Multi-Currency Financial Summary",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('Segregates currencies cleanly', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('currencies');",
+                  "    pm.expect(json).to.have.property('recent_transactions');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "X-Organization-Id", "value": "{{org_id}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/financial/summary",
+              "host": ["{{base_url}}"],
+              "path": ["api", "financial", "summary"]
+            }
+          }
+        },
+        {
+          "name": "Gemini AI Grounded Financial Query",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('Status is 200 OK', function () { pm.response.to.have.status(200); });",
+                  "pm.test('AI response exists and non-empty', function () {",
+                  "    var json = pm.response.json();",
+                  "    pm.expect(json).to.have.property('response');",
+                  "    pm.expect(json.response.length).to.be.above(5);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Organization-Id", "value": "{{org_id}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"prompt\": \"How much total money has been collected across all events?\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/ai/query",
+              "host": ["{{base_url}}"],
+              "path": ["api", "ai", "query"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

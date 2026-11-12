@@ -1,195 +1,252 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import '../../services/api_service.dart';
-import '../../models/event.dart';
 import '../../config/colors.dart';
 import '../../config/routes.dart';
+import '../../services/event_treasury_api_service.dart';
+import '../../widgets/event_treasury_shell.dart';
 
-class CreateEventScreen extends StatefulWidget {
-  const CreateEventScreen({super.key});
+class CreateEventTreasuryScreen extends StatefulWidget {
+  const CreateEventTreasuryScreen({super.key});
 
   @override
-  State<CreateEventScreen> createState() => _CreateEventScreenState();
+  State<CreateEventTreasuryScreen> createState() => _CreateEventTreasuryScreenState();
 }
 
-class _CreateEventScreenState extends State<CreateEventScreen> {
+class _CreateEventTreasuryScreenState extends State<CreateEventTreasuryScreen> {
+  final _aiPromptController = TextEditingController();
   final _titleController = TextEditingController();
-  final _targetAmountController = TextEditingController();
-  final _amountController = TextEditingController();
-  
-  EventAmountMode _amountMode = EventAmountMode.fixed;
-  bool _sameAmountFromEveryone = true;
-  DateTime _expiryDate = DateTime.now().add(const Duration(days: 7));
-  bool _isLoading = false;
+  final _descController = TextEditingController();
+  final _amountController = TextEditingController(text: '25.00');
+  final _targetController = TextEditingController(text: '2500.00');
+  final _participantsController = TextEditingController(text: '100');
+  final _daysController = TextEditingController(text: '14');
 
-  Future<void> _createEvent() async {
-    final title = _titleController.text.trim();
-    if (title.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please enter a title')));
-      return;
-    }
-    
-    double? amount;
-    if (_amountMode != EventAmountMode.flexible) {
-      amount = double.tryParse(_amountController.text);
-      if (amount == null || amount <= 0) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Please enter a valid amount')));
-        return;
-      }
-    }
+  String _currency = 'USD';
+  String _category = 'Conference';
+  bool _isAILoading = false;
+  bool _isSubmitting = false;
 
-    double? targetAmount = double.tryParse(_targetAmountController.text);
+  Future<void> _handleAIExtraction() async {
+    final prompt = _aiPromptController.text.trim();
+    if (prompt.isEmpty) return;
 
-    setState(() => _isLoading = true);
+    setState(() => _isAILoading = true);
     try {
-      final event = await ApiService.createEvent(
-        title: title,
-        amountMode: _amountMode,
-        amount: amount,
-        targetAmount: targetAmount,
-        sameAmountFromEveryone: _amountMode == EventAmountMode.fixed,
-        expiryAt: _expiryDate,
-      );
+      final res = await EventTreasuryApiService.aiParseEvent(prompt);
+      final ev = res['extracted_event'] ?? {};
+      setState(() {
+        if (ev['title'] != null) _titleController.text = ev['title'];
+        if (ev['description'] != null) _descController.text = ev['description'];
+        if (ev['amount'] != null) _amountController.text = ev['amount'].toString();
+        if (ev['target_amount'] != null) _targetController.text = ev['target_amount'].toString();
+        if (ev['expected_participants'] != null) _participantsController.text = ev['expected_participants'].toString();
+        if (ev['currency'] != null) _currency = ev['currency'];
+        if (ev['category'] != null) _category = ev['category'];
+        _isAILoading = false;
+      });
       if (mounted) {
-        context.pushReplacement('${AppRoutes.eventDetail}?eventId=${event.id}');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            backgroundColor: EventTreasuryColors.success,
+            content: Text('AI successfully parsed your event parameters! Review and create below.'),
+          ),
+        );
       }
     } catch (e) {
-      setState(() => _isLoading = false);
+      setState(() => _isAILoading = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('AI extraction failed: $e')),
+      );
+    }
+  }
+
+  Future<void> _handleCreateEvent() async {
+    if (_titleController.text.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Event title is required.')),
+      );
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
+    try {
+      final payload = {
+        'title': _titleController.text.trim(),
+        'description': _descController.text.trim(),
+        'category': _category,
+        'currency': _currency,
+        'amount': double.tryParse(_amountController.text) ?? 0.0,
+        'target_amount': double.tryParse(_targetController.text) ?? 0.0,
+        'expected_participants': int.tryParse(_participantsController.text) ?? 50,
+        'expiry_days': int.tryParse(_daysController.text) ?? 14,
+      };
+      final newEvent = await EventTreasuryApiService.createEvent(payload);
+      setState(() => _isSubmitting = false);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: $e')));
+        context.go('/events/detail?id=${newEvent['id']}');
       }
+    } catch (e) {
+      setState(() => _isSubmitting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to create event: $e')),
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Create Event')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24.0),
+    return EventTreasuryShell(
+      currentRoute: AppRoutes.createEvent,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 800),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Create Event Collection',
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.w800),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Generate a Level 1 Event Registration portal and automated PayPal Invoicing engine',
+                  style: TextStyle(color: EventTreasuryColors.lightTextSecondary),
+                ),
+                const SizedBox(height: 24),
+                _buildAIAssistedBox(),
+                const SizedBox(height: 28),
+                _buildManualForm(),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAIAssistedBox() {
+    return Card(
+      color: EventTreasuryColors.lightBlue,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: const BorderSide(color: EventTreasuryColors.borderBlue),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Event Title', style: TextStyle(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
+            Row(
+              children: const [
+                Icon(Icons.auto_awesome, color: EventTreasuryColors.paypalBlue, size: 20),
+                SizedBox(width: 8),
+                Text(
+                  'Natural Language Event Creation (Gemini AI)',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _aiPromptController,
+              maxLines: 3,
+              decoration: InputDecoration(
+                filled: true,
+                fillColor: Colors.white,
+                hintText: 'e.g. "Create a university hackathon for 120 coders. Registration is \$25 per participant, target is \$3,000, and deadline is in 10 days."',
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: EventTreasuryColors.borderBlue)),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerRight,
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.bolt, size: 18),
+                label: _isAILoading
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                    : const Text('Extract with Gemini'),
+                onPressed: _isAILoading ? null : _handleAIExtraction,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildManualForm() {
+    return Card(
+      elevation: 1,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Event Details & Financial Parameters', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 16),
             TextField(
               controller: _titleController,
-              decoration: InputDecoration(
-                hintText: 'e.g. Goa Trip Fund',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-            const SizedBox(height: 24),
-            
-            const Text('Target Amount (Optional)', style: TextStyle(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _targetAmountController,
-              keyboardType: TextInputType.number,
-              decoration: InputDecoration(
-                hintText: 'e.g. 50000',
-                prefixIcon: const Icon(Icons.currency_rupee),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-            ),
-            const SizedBox(height: 24),
-
-            const Text('Contribution Mode', style: TextStyle(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            SegmentedButton<EventAmountMode>(
-              segments: const [
-                ButtonSegment(value: EventAmountMode.fixed, label: Text('Fixed')),
-                ButtonSegment(value: EventAmountMode.suggested, label: Text('Suggested')),
-                ButtonSegment(value: EventAmountMode.flexible, label: Text('Flexible')),
-              ],
-              selected: {_amountMode},
-              onSelectionChanged: (set) {
-                setState(() {
-                  _amountMode = set.first;
-                  if (_amountMode == EventAmountMode.flexible) {
-                    _sameAmountFromEveryone = false;
-                  }
-                });
-              },
-            ),
-            const SizedBox(height: 6),
-            Text(
-              _amountMode == EventAmountMode.fixed
-                  ? 'Everyone pays the exact same amount. Amount is locked in the QR.'
-                  : _amountMode == EventAmountMode.suggested
-                      ? 'Suggested amount shown in QR, but payer can change it.'
-                      : 'No amount in QR — payer enters any amount they want.',
-              style: const TextStyle(color: Colors.grey, fontSize: 12),
+              decoration: const InputDecoration(labelText: 'Event Title *', border: OutlineInputBorder()),
             ),
             const SizedBox(height: 16),
-
-            if (_amountMode != EventAmountMode.flexible) ...[
-              Text(
-                _amountMode == EventAmountMode.fixed ? 'Fixed Amount per Person' : 'Suggested Amount',
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _amountController,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  hintText: 'e.g. 500',
-                  prefixIcon: const Icon(Icons.currency_rupee),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-              ),
-              const SizedBox(height: 16),
-            ],
-
-            const Text('Expiry Date', style: TextStyle(fontWeight: FontWeight.w600)),
-            const SizedBox(height: 8),
-            InkWell(
-              onTap: () async {
-                final date = await showDatePicker(
-                  context: context,
-                  initialDate: _expiryDate,
-                  firstDate: DateTime.now(),
-                  lastDate: DateTime.now().add(const Duration(days: 365)),
-                );
-                if (date != null) {
-                  setState(() => _expiryDate = date);
-                }
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey.shade400),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text('${_expiryDate.day}/${_expiryDate.month}/${_expiryDate.year}', style: const TextStyle(fontSize: 16)),
-                    const Icon(Icons.calendar_today, size: 20, color: Colors.grey),
-                  ],
-                ),
-              ),
+            TextField(
+              controller: _descController,
+              maxLines: 2,
+              decoration: const InputDecoration(labelText: 'Description', border: OutlineInputBorder()),
             ),
-            const SizedBox(height: 8),
-            const Text(
-              'This event QR will be automatically disabled after 90 days.',
-              style: TextStyle(color: Colors.grey, fontSize: 12),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _amountController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Registration Fee *', prefixText: '\$ ', border: OutlineInputBorder()),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: TextField(
+                    controller: _targetController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Collection Target', prefixText: '\$ ', border: OutlineInputBorder()),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: 40),
-
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _participantsController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Expected Participants', border: OutlineInputBorder()),
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: TextField(
+                    controller: _daysController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Days until Expiry', border: OutlineInputBorder()),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 24),
             SizedBox(
               width: double.infinity,
-              height: 56,
+              height: 48,
               child: ElevatedButton(
-                onPressed: _isLoading ? null : _createEvent,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: PayGoColors.oceanBlue,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                ),
-                child: _isLoading 
-                    ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                    : const Text('Create Event QR', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                onPressed: _isSubmitting ? null : _handleCreateEvent,
+                child: _isSubmitting
+                    ? const CircularProgressIndicator(color: Colors.white)
+                    : const Text('Create Event & Activate PayPal Portal'),
               ),
             ),
           ],

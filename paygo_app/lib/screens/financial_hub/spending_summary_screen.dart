@@ -49,8 +49,17 @@ class _SpendingSummaryScreenState extends State<SpendingSummaryScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Spending Summary'),
-        leading: IconButton(icon: const Icon(Icons.arrow_back_rounded), onPressed: () => context.pop()),
+        title: const Text('Activity & Financial Reports'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_rounded),
+          onPressed: () {
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/home');
+            }
+          },
+        ),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
