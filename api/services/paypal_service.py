@@ -6,10 +6,11 @@ import urllib.error
 import urllib.parse
 from decimal import Decimal
 from typing import Optional, Dict, Any
-from dotenv import load_dotenv
-
-# Load credentials securely from FastAPI .env
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 class PayPalClient:
     """
