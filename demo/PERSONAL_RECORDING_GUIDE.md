@@ -109,3 +109,4 @@ When you record, use this simple 3-part mental model to explain why PayPal and C
    - *"Ticket sales are only half the story. When an organizer books a beach villa in Goa, pays caterers, or rents sound equipment, that money leaves their bank account, not the ticketing app. The Financial Hub connects to the organizer's bank to track those real vendor outflows."*
 3. **EventLedger AI = The Intelligent Bridge**:
    - *"By bringing PayPal ticket revenue and bank cashflow into one workspace, Gemini AI can tell the organizer: 'You collected $1,000 via PayPal, but your Goa villa deposit is $700—leaving $300 in liquid event margin.' That is true event financial intelligence."*
+
