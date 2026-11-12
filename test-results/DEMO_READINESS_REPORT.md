@@ -56,3 +56,4 @@ To record the 2-minute-45-second demonstration video using your preferred record
 4. **Export**:
    - Save the raw capture as `demo/EventLedger_AI_Full_Walkthrough.mp4`.
    - Export the cut, pacing-adjusted 2:45 video as `demo/EventLedger_AI_PayPal_Hackathon_Demo.mp4`.
+

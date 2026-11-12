@@ -81,3 +81,4 @@
 1. **Cashfree Sandbox**: Disclosed as groundwork/adapter-complete, noting merchant activation requirement for live orders.
 2. **Account Aggregator**: Disclosed as a compliant simulation modeling RBI AA framework without requiring live NBFC-AA production licenses.
 3. **PayPal Invoice**: Displayed accurately as `UNPAID` in Sandbox, proving authentic API interaction rather than falsified completed receipts.
+

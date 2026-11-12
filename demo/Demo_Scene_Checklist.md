@@ -27,3 +27,4 @@ This checklist specifies the exact UI screen, backend trigger, and visual checks
 - [x] Gemini API key configured with responsive `< 2s` latency.
 - [x] Seed data initialized with distinct currencies and realistic ledger entries.
 - [x] Browser resolution set to 1920x1080 with clean window profile.
+
