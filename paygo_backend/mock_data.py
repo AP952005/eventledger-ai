@@ -33,24 +33,6 @@ EVENTS: list[Event] = [
         paypal_merchant_id="sandbox-merchant-01"
     ),
     Event(
-        id="evt-paypal-002",
-        organizer_id="org-001",
-        title="PayPal Developer Hackathon Workshop",
-        description="Hands-on coding workshop building multi-agent financial applications with PayPal REST Invoicing APIs and Gemini 2.5 Flash.",
-        category="Hackathon",
-        currency="USD",
-        amount=Decimal("15.00"),
-        target_amount=Decimal("1200.00"),
-        expected_participants=80,
-        max_participants=100,
-        expiry_at=(_now + timedelta(days=5)).isoformat(),
-        status=EventStatus.ACTIVE,
-        created_at=(_now - timedelta(days=7)).isoformat(),
-        terms_and_conditions="Bring your laptop and an active PayPal Sandbox developer account.",
-        refund_policy="Registration is non-refundable but transferable.",
-        paypal_merchant_id="sandbox-merchant-01"
-    ),
-    Event(
         id="evt-paypal-003",
         organizer_id="org-001",
         title="Silicon Valley Founders Pitch Night",
@@ -236,27 +218,4 @@ PAYMENT_TRANSACTIONS: list = []
 MERCHANT_ACCOUNTS: list = []
 
 # Audit Logs
-AUDIT_LOGS: list[AuditLog] = [
-    AuditLog(
-        id="aud-001",
-        actor="System: PayPal Invoicing Engine",
-        action="INVOICE_GENERATED",
-        event_id="evt-paypal-001",
-        participant_id="part-001",
-        paypal_invoice_id="INV2-TEST-ELENA01",
-        status="SUCCESS",
-        timestamp=(_now - timedelta(days=2, hours=2)).isoformat(),
-        details={"amount": "45.00", "currency": "USD"}
-    ),
-    AuditLog(
-        id="aud-002",
-        actor="PayPal Webhook Processor",
-        action="PAYMENT_VERIFIED",
-        event_id="evt-paypal-001",
-        participant_id="part-001",
-        paypal_invoice_id="INV2-TEST-ELENA01",
-        status="SUCCESS",
-        timestamp=(_now - timedelta(days=2, hours=1)).isoformat(),
-        details={"txn_ref": "PAYID-ELENA-99128", "amount": "45.00"}
-    )
-]
+AUDIT_LOGS: list[AuditLog] = []

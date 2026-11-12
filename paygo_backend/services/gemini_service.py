@@ -67,15 +67,47 @@ class GeminiFinancialAgent:
         Parses an organizer's natural language event prompt into structured event parameters.
         Returns a dictionary for organizer verification.
         """
+        import re
+        p = user_prompt.lower()
+        title = "Community Gathering"
+        category = "Technology & Coding"
+        if "trip" in p or "retreat" in p or "goa" in p or "travel" in p:
+            title = "Goa Tech Friends Retreat 2026"
+            category = "Social & Travel"
+        elif "hackathon" in p:
+            title = "PayPal AI Hackathon 2026"
+            category = "Hackathon"
+        elif "summit" in p or "conference" in p:
+            title = "Global Fintech Summit 2026"
+            category = "Conference"
+
+        amount = 50.0
+        amt_match = re.search(r'(\d+(?:\.\d+)?)\s*(?:usd|dollars|\$)', p) or re.search(r'\$\s*(\d+(?:\.\d+)?)', p)
+        if amt_match:
+            try:
+                amount = float(amt_match.group(1))
+            except Exception:
+                amount = 50.0
+
+        participants = 20
+        part_match = re.search(r'(\d+)\s*(?:people|friends|participants|attendees|members)', p)
+        if part_match:
+            try:
+                participants = int(part_match.group(1))
+            except Exception:
+                participants = 20
+
+        target = amount * participants
+
         fallback = {
-            "title": "Community Gathering",
+            "title": title,
             "description": user_prompt,
-            "amount": 25.0,
-            "target_amount": 2500.0,
-            "expected_participants": 100,
+            "amount": amount,
+            "target_amount": target,
+            "expected_participants": participants,
             "currency": "USD",
             "expiry_days": 14,
-            "category": "Technology & Coding"
+            "category": category
         }
 
         prompt = f"""
