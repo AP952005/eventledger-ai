@@ -22,21 +22,29 @@ Designed specifically for modern tech conferences, hackathons, workshops, and co
 
 ## 2. Problem Statement
 
-Organizers of group events, summits, and hackathons face three recurring pain points:
-1. **Manual Tracking & Screenshot Fraud**: Organizers waste dozens of hours matching bank transfer screenshots or WhatsApp receipts against attendee spreadsheets.
-2. **Payment Gateway Complexity**: Offering domestic payment options (e.g., UPI in India) alongside international methods (PayPal) usually requires fractured checkout flows and disjointed bookkeeping.
-3. **Audit & Settlement Chaos**: Once an event concludes, proving that every participant paid and that final ledger totals are untampered requires painstaking manual auditing.
+Organizers of global conferences, collegiate summits, developer hackathons, and corporate workshops face four critical, systemic pain points:
+
+1. **The "Data Blindspot" of Disconnected Event Apps**: 
+   Standard ticketing platforms (Eventbrite, Luma, Meetup) operate as isolated data islands. They only record ticket registration income collected within their own database. However, real-world events have substantial operational expenses paid outside the app: venue booking deposits, caterers, AV equipment rentals, keynote speaker travel reimbursements, and marketing campaigns. Because organizers cannot connect their external bank accounts, they suffer from fractured cashflow visibility. An organizer might see $5,000 in gross ticket revenue, unaware that $4,200 in vendor debit obligations cleared their bank account yesterday, leaving their operational runway dangerously tight.
+2. **Manual Payment Matching & Screenshot Fraud**: 
+   Organizers waste dozens of hours matching bank transfer screenshots, UPI UTR numbers, or WhatsApp payment receipts against manual attendee spreadsheets, inviting fraud, double-entry errors, and duplicate check-ins.
+3. **Cross-Border Gateway & Regulatory Incompatibility**: 
+   Offering domestic payment options (e.g., UPI in India) alongside international methods (PayPal for global attendees) typically requires fractured checkout flows, disparate merchant accounts, and complex compliance handling (such as RBI regulations separating domestic INR transactions from cross-border settlements).
+4. **Audit & Settlement Chaos**: 
+   Once an event concludes, proving to sponsors, universities, corporate finance, or tax authorities that every participant paid and that final ledger totals are untampered requires painstaking manual auditing without cryptographic proof.
 
 ---
 
 ## 3. Solution Overview
 
-EventLedger AI provides a unified, end-to-end financial operations platform:
-- **Intelligent Payment Orchestration**: Evaluates the currency and payer geography to route transactions to the optimal gateway (Cashfree UPI for domestic INR, PayPal Invoicing v2 for international currencies like USD).
-- **Grounded AI Financial Copilot**: Google Gemini 3.1 Flash-Lite reads verified application telemetry in real time to answer queries, summarize balances, and draft personalized reminders.
+EventLedger AI solves this by introducing an **Intelligent Event Financial Operating Layer**:
+
+- **Consent-Driven Financial Analysis (Account Aggregator Layer)**: Bridges the data blindspot by implementing the regulatory framework governed by the **Reserve Bank of India (RBI) Account Aggregator Directions (updated Sept 2024)**. Organizers securely link external bank accounts to aggregate net worth, track categorized vendor burn, and analyze real operational cashflow alongside PayPal ticketing revenue.
+- **Intelligent Payment Orchestration**: Evaluates the currency and payer geography to route transactions to the optimal gateway (Cashfree UPI for domestic INR, PayPal Invoicing v2 for international currencies like USD/EUR).
+- **Grounded AI Financial Copilot**: Google Gemini 3.1 Flash-Lite reads verified application telemetry and linked financial metrics in real time to answer queries, summarize balances, and forecast runway without hallucinations.
 - **Unified Checkout Experience**: One responsive web checkout screen supporting both dynamic UPI QR codes and official PayPal Base64 invoice QR codes.
-- **Cryptographic Settlement Ledger**: Event closure automatically generates an SHA-256 canonical ledger snapshot and digital signature.
-- **One-Click Audit PDF**: Exports an executive financial report ready for stakeholders and auditors.
+- **Cryptographic Settlement Ledger**: Event closure automatically generates an SHA-256 canonical ledger snapshot and ECDSA digital signature for audit-ready proof.
+- **One-Click Audit PDF**: Exports an executive financial report ready for stakeholders, tax accountants, and auditors.
 
 ---
 
@@ -217,38 +225,60 @@ Traditional event ticketing platforms operate in complete financial isolation. T
 - **Cashflow visibility is fractured**: An organizer might see $5,000 in gross ticket sales on their event dashboard, but remain unaware that vendor debit obligations totaling $4,200 cleared their bank account yesterday, leaving their operational runway dangerously tight.
 - **Disconnected accounts prevent real financial intelligence**: Without bank account linking, AI copilots can only answer narrow queries about ticket counts, rather than true financial questions like *"Can we afford the keynote speaker dinner given our current liquid bank balance?"*
 
-### The Solution: Consent-Driven Financial Analysis & Bank Linking
-EventLedger AI solves this with its **Financial Hub** (`/financial-hub`), uniting event ticketing revenue with external financial accounts through a consent-driven **Account Aggregator (AA)** architecture:
+### Regulatory Grounding: The RBI Account Aggregator (AA) Framework
+To model bank-grade financial analysis legitimately, EventLedger AI grounds its Financial Operating Layer in the **Reserve Bank of India's Master Direction – Non-Banking Financial Company – Account Aggregator (Reserve Bank) Directions, 2016 (updated through September 6, 2024)**. 
+
+The framework establishes the legal mechanism through which an application obtains bank-account information, transaction histories, and financial data strictly with explicit user consent:
+
+#### 1. The Four Core Ecosystem Entities
+| Entity | Role in Ecosystem | EventLedger AI Architecture Mapping |
+| :--- | :--- | :--- |
+| **User (Event Organizer)** | Owns the bank account and grants explicit consent. | Grants granular, time-bound consent in Flutter UI. |
+| **Bank (FIP)** | **Financial Information Provider** — holds and encrypts customer account data. | Integrated banking institutions (HDFC, ICICI, Axis). |
+| **Account Aggregator (AA)** | Regulated NBFC intermediary managing consent verification and encrypted data piping. | Consent orchestration layer validating permissions. |
+| **Application (FIU)** | **Financial Information User** — licensed recipient utilizing financial telemetry. | EventLedger AI Backend computing net worth & runway. |
+
+> **Key Regulatory Distinction**: The AA framework is strictly designed for **financial information sharing**, not payment initiation. In EventLedger AI, payment execution is cleanly decoupled and delegated to authorized payment rails (**PayPal REST API v2** for global transactions, **Cashfree Payments** for UPI), while the AA framework powers deep financial analysis.
+
+#### 2. Supported Financial Information Types & Capabilities
+Through the consent-driven AA integration, EventLedger AI can ingest:
+- **Account Balances & Deposits**: Real-time checking, savings, and term deposits.
+- **Categorized Transaction Histories**: Automated extraction of monthly cash outflows.
+- **Spending Commitments**: Detection of upcoming recurring obligations (software tools, SaaS subscriptions, rent).
+
+This financial telemetry enables the Financial Hub to compute:
+- **Monthly Income & Inflow Patterns**: Comparing event collections against historical baseline revenue.
+- **Operational Expense Categorization**: Grouping vendor payments into Food & Beverage, Logistics, Marketing, and Venue.
+- **Real Liquid Reserves & Runway Forecasting**: Preventing organizers from over-committing to event perks when bank balances are constrained.
 
 ```mermaid
 flowchart LR
-    subgraph Banks["Connected Banking Institutions"]
+    subgraph Banks["Financial Information Providers (FIPs)"]
         B1["HDFC Bank Checking"]
         B2["ICICI Bank Savings"]
         B3["Axis Bank Operating"]
     end
 
-    subgraph AA["Account Aggregator Network"]
-        Consent["FIP Consent Engine<br/>(Purpose, Period, Data Type)"]
+    subgraph AA["Regulated Account Aggregator (AA)"]
+        Consent["RBI Consent Artifact Engine<br/>(Purpose, Frequency, Validity, Data Types)"]
     end
 
-    subgraph EventLedger["EventLedger AI Platform"]
+    subgraph EventLedger["EventLedger AI (FIU Layer)"]
         Hub["Financial Hub<br/>Aggregated Balances & Cashflow"]
-        PayPal["PayPal Event Revenue<br/>(Invoicing & Collections)"]
-        AI["Gemini Copilot<br/>Real-Time Financial Analysis"]
+        PayPal["PayPal Invoicing v2<br/>(Global Collections)"]
+        AI["Gemini 3.1 Copilot<br/>Holistic Financial Intelligence"]
     end
 
-    Banks -->|Encrypted Financial Data| Consent
-    Consent -->|Consent-Approved Feed| Hub
+    Banks -->|Encrypted Financial Data (FIP)| Consent
+    Consent -->|Consent-Approved Telemetry| Hub
     PayPal --> Hub
     Hub --> AI
 ```
 
-1. **Consent-Driven Bank Linking**: Implements a compliant multi-step consent flow modeled after RBI-regulated Account Aggregator (AA) specifications. Organizers select their financial institution, specify the consent validity window, grant explicit data access scopes, and link multiple checking, savings, and credit accounts.
-2. **Comprehensive Net Worth & Liquidity Overview**: Aggregates external bank balances with pending and collected PayPal event funds to display true operational net worth and liquid reserves in real time.
-3. **Categorized Expense & Cashflow Analysis**: Categorizes external debits across key event cost centers—Food & Beverage, Venue Logistics, Travel & Transport, Utilities & Subscriptions—contrasting actual bank debits against gross event ticket revenues.
-4. **Multi-Currency Ledger Segregation**: Keeps international funds (`USD`, `EUR`) and domestic funds (`INR`) strictly isolated in dedicated ledger views, preventing deceptive currency mixing while applying timestamped reference conversion for consolidated reporting.
-5. **AI-Powered Holistic Financial Advisory**: With external bank telemetry integrated into the secure backend financial summary (`GET /api/financial/summary`), the Google Gemini AI copilot can deliver holistic financial advice, runway forecasting, and cashflow risk detection.
+### Implementation Highlights in EventLedger AI
+1. **Consent-Driven Bank Linking Screen (`/financial-hub/consent`)**: A complete multi-step consent journey modeling the standard RBI AA consent artifact—defining consent purpose, date range, frequency of fetch, and data types (balances, transactions).
+2. **Multi-Currency Ledger Segregation**: Keeps international event collections (`USD`, `EUR`) in PayPal and domestic balances (`INR`) in distinct ledger accounts without artificial currency conflation.
+3. **Holistic AI Financial Advisory**: With external bank telemetry unified alongside event invoicing records in `GET /api/financial/summary`, the Google Gemini copilot provides comprehensive answers to high-level strategic questions.
 
 *(Note: Live bank linking uses high-fidelity mock banking definitions to simulate the Account Aggregator protocol safely without requiring production NBFC-AA licenses).*
 
